@@ -203,8 +203,8 @@ class Simulator:
         
         if self.debug_bit>1:
            print "find()"
-#        s.image_final = np.concatenate((s.image_final ,np.zeros((s.image_final.shape[0],300))),1) # this is just for testing non-square input images...
-        self.finder.input(s.image_final, variance=self.bg_noise_var, psf=self.psf_sigma)
+#        self.image_final = np.concatenate((self.image_final ,np.zeros((self.image_final.shape[0],300))),1) # this is just for testing non-square input images...
+        self.finder.input(self.image_final, variance=self.bg_noise_var, psf=self.psf_sigma)
         
     def run(self):
         
@@ -221,8 +221,8 @@ class Simulator:
             s = self.finder.streaks[0]
             
             if self.debug_bit:            
-                print "SIMULATED : S/N= %4.2f | I= %4.2f | L= %4.1f | th= %4.2f | x0= %4.1f" % (self.calcSNR(), self.intensity, self.L*self.im_size, self.th, self.x0*self.im_size)
-                print "CALCULATED: S/N= %4.2f | I= %4.2f | L= %4.1f | th= %4.2f | x0= %4.1f" % (s.snr, s.I, s.L, s.th, s.x0)
+                print "SIMULATED : S/N= %4.2f | I= %5.2f | L= %6.1f | th= %4.2f | x0= %4.1f" % (self.calcSNR(), self.intensity, self.L*self.im_size, self.th, self.x0*self.im_size)
+                print "CALCULATED: S/N= %4.2f | I= %5.2f | L= %6.1f | th= %4.2f | x0= %4.1f" % (s.snr, s.I, s.L, s.th, s.x0)
     
             if self.debug_bit>1:
     
@@ -248,7 +248,3 @@ if __name__ == "__main__":
     s.y2 = 1.0/2
     s.run()
     
-        
-        
-        
-        

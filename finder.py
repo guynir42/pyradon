@@ -227,7 +227,7 @@ class Finder:
         log_step = int(log_step)        
         
         if empty(self._input_var) or scalar(self._input_var):
-            return self.radon_var_uni[transpose][log_step-1]
+            return self._input_var*self.radon_var_uni[transpose][log_step-1]
         else:
             return self.radon_var_map[transpose][log_step-1]
         
@@ -283,6 +283,8 @@ class Finder:
             image_single = images[i,:,:]
             self.frame_num = i
             self.last_snr = []
+            self.streaks = [] # make a new, empty list for the transposed FRT
+            self.last_streak = []
             
             if self.psf.ndim>2:
                 this_psf = self.psf[i,:,:]
@@ -314,16 +316,18 @@ class Finder:
             if not empty(self.streaks):
                 if self.use_save_images:
                     for s in self.streaks:
-                        s.input_image = images[i,:,:]
+                        s.input_image = np.array(images[i,:,:])
                         if s.transposed:
-                            s.radon_image = self.radon_image_trans
+                            s.radon_image = np.array(self.radon_image_trans)
                         else:
-                            s.radon_image = self.radon_image
+                            s.radon_image = np.array(self.radon_image)
+                        if not empty(s.subframe):
+                            s.subframe = np.array(s.subframe)
                 else:
                     s.input_image = []
                     s.radon_image = []
                     s.subframe = []
-                
+            
             if not empty(self.streaks):
                 best_snr = self.best.snr
             else: # no streaks, just take the best S/N in the final Radon images

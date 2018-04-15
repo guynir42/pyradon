@@ -116,15 +116,24 @@ class Streak:
         self.y2 = self.radon_y2
         self.dy = self.y2-self.y1
         self.dx = self.radon_dx
-        self.a = self.dy/self.dx
-        self.x0 = self.radon_x0 - self.y1/self.a - offset
-        self.b = -self.a*self.x0
-        self.th = math.degrees(math.atan(self.a))
+        if self.radon_dx!=0:
+            self.a = self.dy/self.dx
+            self.x0 = self.radon_x0 - self.y1/self.a - offset
+            self.b = -self.a*self.x0
+            self.th = math.degrees(math.atan(self.a))
+            self.x1 = (self.y1-self.b)/self.a
+            self.x2 = (self.y2-self.b)/self.a
+        else:
+            self.a = float('NaN')
+            self.x0 = self.radon_x0
+            self.b = float('NaN')
+            self.th = 90
+            self.x1 = self.radon_x0
+            self.x2 = self.radon_x0
+        
         self.L = abs(self.radon_dy/math.sin(math.radians(self.th)))
         self.I = self.snr*math.sqrt(self.noise_var/self.L*2*math.sqrt(math.pi)*self.psf_sigma)/math.fabs(math.sin(math.radians(self.th)))
         self.snr_fwhm = self.I*0.81/math.sqrt(self.noise_var)
-        self.x1 = (self.y1-self.b)/self.a
-        self.x2 = (self.y2-self.b)/self.a
         
         if self.transposed:
             self.x1,self.y1 = self.y1,self.x1
