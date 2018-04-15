@@ -255,6 +255,7 @@ class Finder:
             images = crop2size(images, self.crop_size)
         
         self.im_size = imsize(images)
+        self.input_images = images
 
         # input the variance, if given!
         if not empty(variance):
@@ -304,7 +305,11 @@ class Finder:
             self.streaks = [] # make a new, empty list for the transposed FRT
             self.last_streak = []
 
-            RT = pyradon.frt.frt(self.subtracted_image, expand=self.useExpand(), finder=self, transpose=True)
+            if self.use_only_one==0 or self.use_recursive:
+                RT = pyradon.frt.frt(self.subtracted_image, expand=self.useExpand(), finder=self, transpose=True)
+            else:
+                RT = pyradon.frt.frt(image_single, expand=self.useExpand(), finder=self, transpose=True)
+            
             self.streaks.extend(temp_streaks) # combine the lists from the regular andf transposed FRT
             
             self.radon_image = R/np.sqrt(V*self.psfNorm(this_psf))
