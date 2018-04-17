@@ -132,7 +132,8 @@ class Streak:
             self.x2 = self.radon_x0
         
         self.L = abs(self.radon_dy/math.sin(math.radians(self.th)))
-        self.I = self.snr*math.sqrt(self.noise_var/self.L*2*math.sqrt(math.pi)*self.psf_sigma)/math.fabs(math.sin(math.radians(self.th)))
+        f = math.fabs(math.sin(math.radians(self.th)))
+        self.I = self.snr*math.sqrt(self.noise_var*2*math.sqrt(math.pi)*self.psf_sigma/(self.L*f))
         self.snr_fwhm = self.I*0.81/math.sqrt(self.noise_var)
         
         if self.transposed:
