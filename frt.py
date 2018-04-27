@@ -104,7 +104,7 @@ def frt(M_in, transpose=False, expand=False, padding=True, partial=False, finder
     M_out = np.transpose(M, (0,2,1))[:,:,0] # lose the empty dimension
     
     if not empty(finder):
-        finder.finalizeFRT(M_in, transpose)
+        finder.finalizeFRT(M_in, transpose, M_out)
     
     if partial:
         if not empty(output):

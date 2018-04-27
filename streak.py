@@ -110,6 +110,7 @@ class Streak:
         
         # signal to noise from the subframe maximum
         self.snr = self.subframe[self.radon_max_idx]      
+        self.is_short = self.subframe.ndim>2 and self.subframe.shape[1]>1
         
         # assume there is no transpose (then add it if needed)
         self.y1 = self.radon_y1

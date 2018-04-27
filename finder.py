@@ -398,7 +398,7 @@ class Finder:
                 
     # end of "scan"
     
-    def finalizeFRT(self, M_in, transpose): # this is called at the end of "frt()" if it is given a Finder object
+    def finalizeFRT(self, M_in, transpose, radon_image): # this is called at the end of "frt()" if it is given a Finder object
         self.subtracted_image = M_in # even if we don't subtract anything, this must be filled
         
         if not empty(self.last_streak) and (self.last_streak.radon_dy < self.min_length): # if we found a very short streak
@@ -406,6 +406,8 @@ class Finder:
             
         if not empty(self.last_streak):
             
+            self.last_streak.input_image = M_in
+            self.last_streak.radon_image = radon_image;
             self.streaks.append(self.last_streak)
             self.subtracted_image = self.streaks[-1].subtractStreak(M_in, self.subtract_psf_widths) # first, subtract the found streak
             
