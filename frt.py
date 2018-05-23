@@ -47,6 +47,10 @@ def frt(M_in, transpose=False, expand=False, padding=True, partial=False, finder
     if transpose:
         M = M.T
     
+    if not empty(finder):
+        finder._im_size_tr = M.shape
+        finder.im_size = M_in.shape
+    
     if padding: 
         M = padMatrix(M)
         
@@ -54,10 +58,6 @@ def frt(M_in, transpose=False, expand=False, padding=True, partial=False, finder
         M = expandMatrix(M)
     
     M_partial = []
-    
-    if not empty(finder):
-        finder._im_size_tr = M.shape
-        finder.im_size = M_in.shape
     
     (Nrows, Ncols) = M.shape
     dx = np.array([0])

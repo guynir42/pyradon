@@ -126,7 +126,7 @@ class Simulator:
         f = self.trig_factor
         L = self.num_pixels/f
         
-        snr = self.intensity*math.sqrt(L*f/self.bg_noise_var)
+        snr = self.intensity*math.sqrt(L/self.bg_noise_var)
         
         if self.use_conv:
             snr = snr/math.sqrt(2*math.sqrt(math.pi)*self.psf_sigma)
@@ -247,5 +247,12 @@ if __name__ == "__main__":
     s.y1 = 1/3
     s.y2 = 1.0/2
     
+    s.x1 = 0.01
+    s.y1 = 0.01
+    s.x2 = 1.4
+    s.y2 = 1.5
+    
+    s.finder.use_short = 0
+    s.finder.use_exclude = 0
     s.run()
     

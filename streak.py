@@ -119,7 +119,7 @@ class Streak:
         self.dx = self.radon_dx
         if self.radon_dx!=0:
             self.a = self.dy/self.dx
-            self.x0 = self.radon_x0 - self.y1/self.a - offset
+            self.x0 = self.radon_x0 - self.y1/self.a
             self.b = -self.a*self.x0
             self.th = math.degrees(math.atan(self.a))
             self.x1 = (self.y1-self.b)/self.a
@@ -133,8 +133,8 @@ class Streak:
             self.x2 = self.radon_x0
         
         self.L = abs(self.radon_dy/math.sin(math.radians(self.th)))
-        f = math.fabs(math.sin(math.radians(self.th)))
-        self.I = self.snr*math.sqrt(self.noise_var*2*math.sqrt(math.pi)*self.psf_sigma/(self.L*f))
+#        f = math.fabs(math.sin(math.radians(self.th)))
+        self.I = self.snr*math.sqrt(self.noise_var*2*math.sqrt(math.pi)*self.psf_sigma/(self.L))
         self.snr_fwhm = self.I*0.81/math.sqrt(self.noise_var)
         
         if self.transposed:

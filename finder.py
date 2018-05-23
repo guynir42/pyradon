@@ -276,11 +276,16 @@ class Finder:
         V = np.transpose(self.getRadonVariance(transpose=False), (0,2,1))[:,:,0]
         VT = np.transpose(self.getRadonVariance(transpose=True), (0,2,1))[:,:,0]
         
+        th = np.arctan(np.arange(-self.im_size[0]+1, self.im_size[0])/np.float(self.im_size[0]))
+        G = 1.0/np.sqrt(np.maximum(np.cos(th), np.sin(th)))
+        thT = np.arctan(np.arange(-self.im_size[1]+1, self.im_size[1])/np.float(self.im_size[1]))
+        GT = 1.0/np.sqrt(np.maximum(np.cos(thT), np.sin(thT)))
+        
         for i in range(images.shape[0]): # loop over all input images
             
             if self.debug_bit:
                 sys.stdout.write("running streak detection on batch %d | frame %d " % (self.batch_num, i))
-                        
+            
             image_single = images[i,:,:]
             self.frame_num = i
             self.last_snr = []
@@ -312,8 +317,8 @@ class Finder:
             
             self.streaks.extend(temp_streaks) # combine the lists from the regular andf transposed FRT
             
-            self.radon_image = R/np.sqrt(V*self.psfNorm(this_psf))
-            self.radon_image_trans = RT/np.sqrt(VT*self.psfNorm(this_psf))
+            self.radon_image = R/np.sqrt(V*self.psfNorm(this_psf))*G[:, np.newaxis]
+            self.radon_image_trans = RT/np.sqrt(VT*self.psfNorm(this_psf))*GT[:, np.newaxis]
             
             if self.use_only_one and not self.use_recursive:
                 self.streaks = [self.best]
@@ -365,7 +370,12 @@ class Finder:
         
         V = self.getRadonVariance(transpose, m)
         
-        SNR = subframe/np.sqrt(V*self.psfNorm(self.psf))
+        S = (subframe.shape[0]+1)/2
+        th = np.arctan(np.arange(-S+1,S)/np.float(S))
+        G = 1/np.sqrt(np.maximum(np.cos(th), np.sin(th)))
+        G = G[:, np.newaxis, np.newaxis]
+        
+        SNR = subframe/np.sqrt(V*self.psfNorm(self.psf))*G
         
         SNR_final = SNR 
         
