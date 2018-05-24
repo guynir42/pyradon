@@ -341,7 +341,10 @@ class Finder:
             if not empty(self.streaks):
                 best_snr = self.best.snr
             else: # no streaks, just take the best S/N in the final Radon images
-                best_snr = self.last_snr
+                if self.last_snr>0:
+                    best_snr = self.last_snr
+                else:
+                    best_snr = max(np.max(self.radon_image), np.max(self.radon_image_trans))
             
             if self.debug_bit:
                 sys.stdout.write("best S/N found was %f\n" % best_snr)
@@ -413,6 +416,7 @@ class Finder:
         
         if not empty(self.last_streak) and (self.last_streak.radon_dy < self.min_length): # if we found a very short streak
             self.last_streak = []
+            self.last_snr = 0
             
         if not empty(self.last_streak):
             
