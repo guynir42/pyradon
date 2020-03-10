@@ -7,20 +7,22 @@ Created on Thu Dec 21 13:56:51 2017
 
 import numpy as np
 import math
-from pyradon.utils import empty
-import pyradon.finder
 
-def frt(M_in, transpose=False, expand=False, padding=True, partial=False, finder=None, output=None):
+from pyradon.utils import empty
+
+from numba import njit
+
+def FRT(M_in, transpose=False, expand=False, padding=True, partial=False, output=None):
     """ Fast Radon Transform (FRT) of the input matrix M_in (must be 2D numpy array)
     Additional arguments: 
      -transpose (False): transpose M_in (replace x with y) to check all the other angles. 
      -expand (False): adds zero padding to the sides of the passive axis to allow for corner-crossing streaks
      -padding (True): adds zero padding to the active axis to fill up powers of 2. 
      -partial (False): use this to save second output, a list of Radon partial images (useful for calculating variance at different length scales)
-     -finder (None): give a "finder" object that is used to scan for streaks. Must have a "Scan" method. 
-     -output (None): give the right size array for FRT to put the return value into it.
+     -output (None): give the a pointer to an array with the right size, for FRT to put the return value into it.
+                     Note that if partial=True then output must be a list of arrays with the right dimensions. 
     """
-#    print "running FRT with: transpose= "+str(transpose)+", expand= "+str(expand)+", padding= "+str(padding)+", partial= "+str(partial)+", finder= "+str(finder)
+#    print("running FRT with: transpose= "+str(transpose)+", expand= "+str(expand)+", padding= "+str(padding)+", partial= "+str(partial)+", finder= "+str(finder))
 
     ############### CHECK INPUTS AND DEFAULTS #################################
 
@@ -29,27 +31,15 @@ def frt(M_in, transpose=False, expand=False, padding=True, partial=False, finder
 
     if M_in.ndim>2:
         raise Exception("FRT cannot handle more dimensions than 2D")
-
-    if not empty(finder):
-        if not isinstance(finder, pyradon.finder.Finder):
-            raise Exception("must input a pyradon.finder.Finder object as finder...")
-
-        scan_method = getattr(finder, 'scan', None)
-        if not scan_method or not callable(scan_method):
-            raise Exception("finder given to FRT doesn't have a scan method")
     
-        finder.last_streak = []
-        
     ############## PREPARE THE MATRIX #########################################
     
     M = np.array(M_in) # keep a copy of M_in to give to finalizeFRT
-    
+
+    np.nan_to_num(M, copy=False)  # get rid of NaNs (replace with zeros)
+
     if transpose:
         M = M.T
-    
-    if not empty(finder):
-        finder._im_size_tr = M.shape
-        finder.im_size = M_in.shape
     
     if padding: 
         M = padMatrix(M)
@@ -57,27 +47,51 @@ def frt(M_in, transpose=False, expand=False, padding=True, partial=False, finder
     if expand: 
         M = expandMatrix(M)
     
-    M_partial = []
+    ############## PREPARE THE MATRIX #########################################
     
+    Nfolds = getNumLogFoldings(M)
     (Nrows, Ncols) = M.shape
-    dx = np.array([0])
+
+    M_out = []
+    
+    if not empty(output): # will return the entire partial transform list
+        if partial:
+            for m in range(2,Nfolds+1):
+                if output[m-1].shape!=getPartialDims(M,m):
+                    raise RuntimeError("Wrong dimensions of output array["+str(m-1)+"]: "\
+                    +str(output[m-1].shape)+", should be "+str(getPartialDims(M,m)))
+                
+            M_out = output
+            
+        else:
+            if output.shape[0]!=2*M.shape[0]-1:
+                raise RuntimeError("Y dimension of output ("+str(output.shape[0])+\
+                ") is inconsistent with (padded and doubled) input ("+str(M.shape[0]*2-1)+")")
+            if output.shape[1]!=M.shape[1]:
+                raise RuntimeError("X dimension of output ("+str(output.shape[1])+\
+                ") is inconsistent with (expanded?) input ("+str(M.shape[1])+")")
         
+    dx = np.array([0], dtype='int64')
+    
     M = M[np.newaxis,:,:]
     
-    for m in range(1, int(math.log(Nrows,2))+1): # loop over logarithmic steps
+    for m in range(1, Nfolds+1): # loop over logarithmic steps
         
         M_prev = M
         dx_prev = dx
         
-        Nrows = M.shape[1] # number of rows in M_prev! 
+        Nrows = M_prev.shape[1]
         
         max_dx = 2**(m)-1
         dx = range(-max_dx, max_dx+1)
-        M = np.zeros((len(dx), Nrows/2, Ncols), dtype=M.dtype)
+        if partial and not empty(output):
+            M = M_out[m-1] # we already have memory allocated for this result
+        else:
+            M = np.zeros((len(dx), Nrows//2, Ncols), dtype=M.dtype) # make a new array each time
         
-        counter = 0;
+        counter = 0
         
-        for i in range(Nrows/2): # loop over pairs of rows  (number of rows in new M)
+        for i in range(Nrows//2): # loop over pairs of rows (number of rows in new M)
             
             for j in range(len(dx)): # loop over different shifts
                 
@@ -94,40 +108,40 @@ def frt(M_in, transpose=False, expand=False, padding=True, partial=False, finder
                 
             counter+=2 
             
-        if finder:
-            finder.scan(M, transpose)
-        if partial:
-            M_partial.append(M)
+        if partial and empty(output): # only append to the list if it hasn't been given from the start using "output"
+            M_out.append(M)
+        
     
-    # end of loop on m
+#     end of loop on m
     
-    M_out = np.transpose(M, (0,2,1))[:,:,0] # lose the empty dimension
-    
-    if not empty(finder):
-        finder.finalizeFRT(M_in, transpose, M_out)
-    
-    if partial:
-        if not empty(output):
-            np.copyto(output, M_partial)
-        return M_partial
-            
-    else:
-        if not empty(output):
+    if not partial: # we don't care about partial transforms, we were not given an array to fill
+#        M_out = np.transpose(M, (0,2,1))[:,:,0] # lose the empty dimension
+        M_out = M[:,0,:] # lose the empty dim
+        
+        if not empty(output): # do us a favor and also copy it into the array 
             np.copyto(output, M_out)
-        return M_out
+            # this can be made more efficient if we use the "output" array as 
+            # target for assignment at the last iteration on m. 
+            # this will save an allocation and a copy of the array. 
+            # however, this is probably not very expensive and not worth 
+            # the added complexity of the code
+    
+    return M_out
                 
+############# end of FRT algorithm, helper functions: ########################
+
 def padMatrix(M):
     N = M.shape[0]
     dN = int(2**math.ceil(math.log(N,2))-N)
 #    print "must add "+str(dN)+" lines..."
-    M = np.vstack((M, np.zeros((dN, M.shape[1]))))
+    M = np.vstack((M, np.zeros((dN, M.shape[1]), dtype=M.dtype)))
     return M 
-    
+
 def expandMatrix(M):
-    Z = np.zeros((M.shape[0],M.shape[0]))
+    Z = np.zeros((M.shape[0],M.shape[0]), dtype=M.dtype)
     M = np.hstack((Z,M,Z))
     return M 
-    
+
 def shift_add(M1,M2, gap):
     
     output = np.zeros_like(M2)
@@ -143,15 +157,58 @@ def shift_add(M1,M2, gap):
     
     return output
 
+def getPartialDims(M, log_level):
+    x = M.shape[1]
+    y = M.shape[0]
+        
+    y = int(y/2**log_level)
+    z = int(2**(log_level+1)-1)
+    
+    return (z,y,x)
+
+def getNumLogFoldings(M):
+    return int(np.ceil(np.log2(M.shape[0])))
+
+def getEmptyPartialArrayList(M):
+    return [np.zeros(getPartialDims(M,m), dtype=M.dtype) for m in range(1,int(getNumLogFoldings(M)+1))]
+
+####################### MAIN ######################################
+   
 if __name__=="__main__":
-    print "this is a test for radon.frt"
 
     import time
+    import matplotlib.pyplot as plt
     
-    print "image of ones((2048,2048)) into FRT"
+    print("this is a test for pyradon.frt")
+
+    
     t = time.time()
     
-    M = np.ones((2048,2048))
-    R = frt(M)
-     
-    print "Elapsed time: "+str(time.time()- t)
+    M = np.random.normal(0,1,(2048,2048)).astype('float32')
+    
+    print("random image of size "+str(M.shape)+" sent to FRT")
+    
+    use_partial = 1
+    
+    if use_partial:
+        Rout = getEmptyPartialArrayList(M)
+    else:
+        Rout = np.zeros((M.shape[0]*2-1, M.shape[1]), dtype=M.dtype)
+
+    R = FRT(M, partial=use_partial, output=Rout)
+    
+    if use_partial:
+        plt.imshow(R[-1][:,0,:])
+    else:
+        plt.imshow(R)
+    
+    print("Elapsed time: "+str(time.time()- t))
+ 
+    
+    
+    
+    
+    
+    
+    
+    

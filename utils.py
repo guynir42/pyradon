@@ -8,12 +8,17 @@ Created on Sun April 8 15:54:00 2018
 from __future__ import division   
 import numpy as np        
 import math
+import matplotlib.pyplot as plt
+import warnings
+
+from numba import njit
 
 def empty(array):
     if array is not None and np.asarray(array).size>0:
         return False
     else:
         return True 
+        
 def scalar(array):
     return (not hasattr(array, '__len__')) and (not isinstance(array, str))
 
@@ -57,19 +62,25 @@ def gaussian2D(sigma_x=2, sigma_y=None, rotation_radians=0, offset_x=0, offset_y
             sigma_y = sigma_x
         
         if empty(size):
-            size = np.asscalar(np.maximum(sigma_x, sigma_y)*20)
+            size = (np.maximum(sigma_x, sigma_y)*20).item(0)
         
         if np.size(size)==1:
-            size = np.asscalar(np.asarray(size))
+            size = (np.asarray(size)).item(0)
             size = (size, size)
                 
-        x = np.linspace(-(size[1]-1)/2,(size[1]-1)/2,size[1])
-        y = np.linspace(-(size[0]-1)/2,(size[0]-1)/2,size[0])
+        # x = np.linspace(-(size[1]-1)/2,(size[1]-1)/2,size[1])
+        # y = np.linspace(-(size[0]-1)/2,(size[0]-1)/2,size[0])
+        # xgrid,ygrid = np.meshgrid(x,y)
+
+        size = (round(size[0]), round(size[1]))
+
+        (y0,x0) = np.indices(size, dtype='float32')
         
-        xgrid,ygrid = np.meshgrid(x,y)
+        x0-=size[1]/2
+        y0-=size[0]/2
         
-        x = xgrid*math.cos(rotation_radians) + ygrid*math.sin(rotation_radians) - offset_x
-        y = -xgrid*math.sin(rotation_radians) + ygrid*math.cos(rotation_radians) - offset_y
+        x = x0*math.cos(rotation_radians) + y0*math.sin(rotation_radians) - offset_x
+        y = -x0*math.sin(rotation_radians) + y0*math.cos(rotation_radians) - offset_y
         
         G = np.exp(-0.5*(x**2/sigma_x**2+y**2/sigma_y**2))
         if norm==0:
@@ -100,110 +111,153 @@ def fit_gaussian(data):
     
     return minimize(min_func, x0, options={'disp':False})
     
-def listPixels(x1,x2,y1,y2,size):
+def model(im_size, x1, x2, y1, y2, sigma, replace_value=0, threshold=1e-10, oversample=4):
+
+    if empty(im_size):
+        raise('Must supply a valid size as first input to model')
+    else:
+        im_size = imsize(im_size)
     
-    if scalar(x1): x1 = [x1]        
-    if scalar(x2): x2 = [x2]        
-    if scalar(y1): y1 = [y1]
-    if scalar(y2): y2 = [y2]
-    if scalar(size): size = [size, size]
+    if oversample:
+        im_size = tuple(s*oversample for s in im_size)
+        x1 = (x1-0.5)*oversample + 0.5
+        x2 = (x2-0.5)*oversample + 0.5
+        y1 = (y1-0.5)*oversample + 0.5
+        y2 = (y2-0.5)*oversample + 0.5
+        sigma = sigma*oversample
         
-    N = max([len(x1), len(x2), len(y1), len(y2)])
-    if len(x1)<N: x1.extend(x1[-1]*(N-len(x1)))
-    if len(x2)<N: x2.extend(x2[-1]*(N-len(x2)))
-    if len(y1)<N: y1.extend(y1[-1]*(N-len(y1)))
-    if len(y2)<N: y2.extend(y2[-1]*(N-len(y2)))
+#    (x,y) = np.meshgrid(range(im_size[1]), range(im_size[0]), indexing='xy')
+    (y,x) = np.indices(im_size, dtype='float32')
+
+    if x1==x2:
+        a = float('Inf')  # do we need this?
+        b = float('NaN')  # do we need this?
+        d = np.abs(x - x1)  # distance from vertical line
+    else:
+        a = (y2-y1)/(x2-x1) # slope parameter
+        b = (y1*x2 - y2*x1)/(x2-x1) # impact parameter
+        d = np.abs(a * x - y + b) / np.sqrt(1 + a ** 2)  # distance from line
+
+    M0 = (1/np.sqrt(2.*np.pi)/sigma)*np.exp(-0.5*d**2/sigma**2) # infinite line
     
-    xlists = []
-    ylists = []
-    num_pixels = []
-    
-    for i in range(N):
-        
-        if x1[i]<0 and x2[i]<0: continue
-        if x1[i]>=size[1] and x2[i]>=size[1]: continue
-    
-        if y1[i]<0 and y2[i]<0: continue
-        if y1[i]>=size[0] and y2[i]>=size[0]: continue
-    
-        if x1[i]==x2[i]:
-            a = float('nan')
+    # must clip this line! 
+    if x1==x2 and y1==y2: # this is extremely unlikely to happen...
+        M0 = np.zeros(M0.shape)
+    elif x1==x2: # vertical line (a is infinite)
+        if y1>y2:
+            M0[y>y1] = 0
+            M0[y<y2] = 0
         else:
-            a = (y2[i]-y1[i])/(x2[i]-x1[i])
+            M0[y<y1] = 0
+            M0[y>y2] = 0
         
-        
-        if math.isnan(a) or math.fabs(a)>=1: # vertical (or closer to vertical) lines
-            
-            if y1[i]<y2[i]:
-                y = np.arange(y1[i], y2[i])
-            else:
-                y = np.arange(y2[i], y1[i])
-
-            if math.isnan(a): # if x1[i]==x2[i]
-                x = np.ones(len(y))*x1[i]
-            else:
-                if y1[i]<y2[i]:
-                    x = x1[i] + (y-y1[i])/a # these values are not rounded!
-                else:
-                    x = x2[i] + (y-y2[i])/a # these values are not rounded!
-
-        else: # horizontal (or closer to horizontal) lines
-            
-            if x1[i]<x2[i]:
-                x = np.arange(x1[i], x2[i])
-                y = y1[i] + (x - x1[i])*a
-            else:
-                x = np.arange(x2[i], x1[i])
-                y = y2[i] + (x - x2[i])*a
-            
-        # clip xy values where y is outside the frame...
-        if y[0]<y[-1]: # ascending order
-            ind_low = np.searchsorted(y, -0.5, side='right')
-            ind_high = np.searchsorted(y, size[0]-0.5, side='left')            
-        elif y[0]>y[-1]: # descending order
-            ind_high = len(y) - np.searchsorted(y[::-1], -0.5, side='left')
-            ind_low = len(y) - np.searchsorted(y[::-1], size[0]-0.5, side='right')
+    elif y1==y2: # horizontal line
+        if x1>x2:
+            M0[x>x1] = 0
+            M0[x<x2] = 0
         else:
-            ind_low = 0;
-            ind_high = len(y)
+            M0[x<x1] = 0
+            M0[x>x2] = 0
+        
+    elif y1<y2:
+        M0[y<(-1/a*x+y1+1/a*x1)] = 0
+        M0[y>(-1/a*x+y2+1/a*x2)] = 0
+    else:
+        M0[y>(-1/a*x+y1+1/a*x1)] = 0
+        M0[y<(-1/a*x+y2+1/a*x2)] = 0
+    
+    
+    M1 = (1/np.sqrt(2*np.pi)/sigma)*np.exp(-0.5*((x-x1)**2+(y-y1)**2)/sigma**2);
+    M2 = (1/np.sqrt(2*np.pi)/sigma)*np.exp(-0.5*((x-x2)**2+(y-y2)**2)/sigma**2);
+    
+    #print('M0: '+str(M0.shape)+' M1: '+str(M1.shape)+' M2: '+str(M2.shape))    
+    
+    M = np.fmax(M0,np.fmax(M1,M2))
+    
+    if oversample>1:
+        M = downsample(M, oversample)/oversample
+    
+#    print(str(M.shape))    
+    
+    M[M<threshold] = replace_value
+    
+    return M
 
-        y = y[ind_low:ind_high]
-        x = x[ind_low:ind_high]
+def downsample(I, factor=2, normalization='sum'):
+    
+    import scipy.signal
+        
+    factor = int(round(factor))
+    
+    if factor==1:
+        return I
 
-        # clip xy values where x is outside the frame...
-        if x[0]<x[-1]:        
-            ind_low = np.searchsorted(x, -0.5, side='right')
-            ind_high = np.searchsorted(x, size[1]-0.5, side='left')            
-        elif x[0]>x[-1]:
-            ind_high = len(x) - np.searchsorted(x[::-1], -0.5, side='left')
-            ind_low = len(x) - np.searchsorted(x[::-1], size[1]-0.5, side='right')
-        else:
-            ind_low = 0
-            ind_high = len(x)
-        
-        y = y[ind_low:ind_high]
-        x = x[ind_low:ind_high]
+    k = np.ones((factor, factor), dtype=I.dtype)
+    if normalization=='mean':
+        k = k/np.sum(k)
     
-        xlists.append(np.round(x).astype(int))
-        ylists.append(np.round(y).astype(int))
-        
-        num_pixels.append(len(x))
-        
-    # end of loop on i
+#    print('I: '+str(I.dtype)+' '+str(I.shape)+' k: '+str(k.dtype)+' '+str(k.shape))
     
-    return xlists, ylists, num_pixels
-    
+    I_conv = scipy.signal.convolve2d(I,k,mode='same')
+
+#    print(str(I_conv.shape))
+
+    return I_conv[factor-1::factor, factor-1::factor]
+
+def jigsaw(M, cut_size, pad_value=float('NaN'), output_corners=None):  # cut an image into small cutouts and return them in a 3D array
+
+    S = imsize(M)  # size of the input
+    C = imsize(cut_size)  # size of the cutouts
+
+    corner_x = list(range(0, S[1], C[1]))  # x position of the corner of each cutout in the input image
+    corner_y = list(range(0, S[0], C[0]))  # y position of the corner of each cutout in the input image
+
+    N = len(corner_x)*len(corner_y)  # number of cutouts
+
+    if np.isnan(pad_value):
+        M_out = np.empty((N, C[0], C[1]), dtype=M.dtype)
+        M_out[:] = np.nan
+    elif pad_value==0:
+        M_out = np.zeros((N, C[0], C[1]), dtype=M.dtype)
+    else:
+        M_out = np.ones((N, C[0], C[1]), dtype=M.dtype) * pad_value
+
+    counter = 0
+
+    if output_corners is not None:
+        output_corners.clear()
+
+    for cy in corner_y:
+        for cx in corner_x:
+
+            c2x = min(cx+C[1], S[1])
+            c2y = min(cy+C[0], S[0])
+            # print("cx= %d | c2x= %d | cy= %d | c2y= %d" % (cx,c2x,cy,c2y))
+            M_out[counter,0:c2y-cy,0:c2x-cx] = M[cy:c2y,cx:c2x]
+
+            if output_corners is not None:
+                output_corners.append((cy,cx))
+
+            counter+=1
+
+    return M_out
+
+def image_stats(M, cut_size=32):
+
+    cutouts = jigsaw(M, cut_size)
+    # print(cutouts.shape)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        m = np.nanmedian(np.nanmean(cutouts, (1,2)))
+        v = np.nanmedian(np.nanvar(cutouts, (1,2)))
+
+    return m,v
+
 if __name__=='__main__':
     
-    import matplotlib.pyplot as plt
+    print("this is a test for model...")
     
-    print "this is a test for listPixels..."
-    S = 512
-    x,y,n = listPixels(0, 512, 100, 300, S)
-    print str(x)
-    print str(y)
+    M = model((500, 400), 350, 200, 300, 400, 3)
     
-    z = np.zeros((S,S))
-    z[y,x] = 1
-    
-    plt.imshow(z)
+    plt.imshow(M)
