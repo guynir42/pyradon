@@ -4,6 +4,8 @@ Created on Sun Dec 24 16:11:12 2017
 
 @author: guyn
 """
+import os
+import sys
 import math
 import os
 import re
@@ -11,9 +13,10 @@ import h5py
 import numpy as np
 import matplotlib.pyplot as plt
 
-from pyradon.utils import empty
-from pyradon.utils import imsize
-from pyradon.utils import model
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from utils import empty, imsize, model
+
 
 class Streak:
     """

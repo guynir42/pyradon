@@ -4,16 +4,21 @@ Created on Sun Dec 24 15:43:28 2017
 
 @author: guyn
 """
-
-from pyradon.streak import Streak
-from pyradon.frt import FRT
-from pyradon.utils import empty, scalar, compare_size, imsize, crop2size, gaussian2D, fit_gaussian, jigsaw, image_stats
-import matplotlib.pyplot as plt
-import scipy.signal
-import numpy as np
-import math
 import sys
+import os
 import time
+import math
+import numpy as np
+import scipy.signal
+import matplotlib.pyplot as plt
+from dataclasses import dataclass, field
+from typing import List, Tuple, Optional, Union
+
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from streak import Streak
+from frt import FRT
+from utils import empty, scalar, compare_size, imsize, crop2size, gaussian2D, fit_gaussian, gaussian_width, jigsaw
 
 
 class Finder:
@@ -52,272 +57,270 @@ class Finder:
  
     """
 
-    def __init__(self):
-
-        ################# switches #################
-
+    @dataclass
+    class Pars:
+        """
+        A class to hold the user-parameters for the Finder class.
+        """
         # image pre-processing
-        self.use_subtract_mean = 1  # subtract any residual bias
-        self.use_conv = 1  # match filter with PSF
-        self.use_crop = 0  # do we want to crop the input images (e.g., to power of 2)
-        self.crop_size = 2048  # does not grow the array
+        use_subtract_mean: bool = True  # subtract any residual bias
+        use_conv: bool = True  # match filter with PSF
+        use_crop: bool = False  # do we want to crop the input images (e.g., to power of 2)
+        crop_size: int = 2048  # size to crop to (does not grow the array)
 
-        self.use_sections = 0  # cut the incoming images into sections to run faster
-        self.size_sections = 1024  # can be a scalar or a 2-tuple
-        self.current_section_corner = (0,0)  # keep track of where the current section starts
+        use_sections: bool = False  # cut the incoming images into sections to run faster
+        size_sections: int = 1024  # can be a scalar or a 2-tuple
 
         # search options
-        self.use_short = 1  # search for short streaks
-        self.min_length = 32  # minimal length (along the axis) for short streaks
-        self.threshold = 5  # in units of S/N
-        self.num_iterations = 5  # how many times to go over the same image to look for streaks (per threshold/per section)
-        self.use_exclude = 1
-        self.exclude_x_pix = (-50, 50)
-        self.exclude_y_pix = None
+        use_short: bool = True  # search for short streaks
+        min_length: int = 32  # minimal length (along the axis) for short streaks
+        threshold: float = 5  # in units of S/N
+        num_iterations: int = 5  # how many times to go over the same image to look for streaks (per threshold/per section)
+        use_exclude: bool = True
+        exclude_x_pix: Optional[Tuple[int, int]] = (-50, 50)
+        exclude_y_pix: Optional[Tuple[int, int]] = None
 
-        self.use_show = 1
-        self.use_save_images = 1
+        use_show: bool = True  # display the images
+        use_save_images: bool = True  # ...
 
-        self.use_write_cutouts = 0
-        self.max_length_to_write = 128
+        use_write_cutouts: bool = False  # ...
+        max_length_to_write: int = 128  # ...
 
-        self.debug_bit = 1
-        self._version = 2.01
+        default_psf_sigma: float = 1  # if no PSF is given, assume this as the width of a Gaussian PSF
+        default_var_scalar: float = 1  # if no variance is given, this is used as the variance scalar
 
-        ################## inputs/outputs ######################
+        verbosity: int = 1
 
-        self.image = None  # image as given to finder
-        self.im_size = None  # two-element tuple
-        self.radon_image = None  # final FRT result (normalized by the var-map)
-        self.radon_image_trans = None  # final FRT of the transposed image (normalized)
-        self.snr_values = []  # list of all SNR values found in this run (use "reset()" to clear them)
-        # self._im_size_tr = []  # size of image after transposition (if not transposed, equal to im_size) (do we need this??)
-        self.best_SNR = 0
+        @property
+        def use_expand(self):
+            # when doing short streaks, no need to expand the axes
+            return not self.use_short
 
-        # objects
-        self.streaks = []  # streaks saved from latest call to input()
-        self.streaks_all = []  # a list of Streak objects that passed the threshold,  saved from all scans (use reset() to remove these)
+    @dataclass
+    class Data:
+        """
+        A class to hold the input/output/intermediate data for the Finder class
+        """
+        _pars = None  # must give the Pars object to allow default values of PSF and variance
 
-        # housekeeping variables
-        self.filename = ''  # which file we are currently scanning
-        self.batch_num = 0  # which batch in the run
-        self.frame_num = 0  # which frame in the batch
-        self.section_num = 0  # which section in the current image
+        # images #
+        image: np.array = None  # image as given to finder
+        im_size: Optional[Tuple[int, int]] = None  # two-element tuple
+        radon_image: np.array = None  # final FRT result (normalized by the var-map)
+        radon_image_tr: np.array = None  # final FRT of the transposed image (normalized)
 
-        ################ PSF width and image ################ 
+        # S/N values found in the images
+        # list of all S/N values found in this run (use "reset()" to clear them)
+        snr_values: List[float] = field(default_factory=list)
+        best_snr: float = 0.0
 
-        self._input_psf = None  # original PSF as given (PSF image or scalar width parameter "sigma")
-        self._psf = None  # the map of the PSF, either as given or generated as a Gaussian from "sigma_psf"
-        self._sigma_psf = None  # the width of a Gaussian PSF, either given as scalar or fit to PSF map
-        self._default_sigma_psf = 1  # if no PSF is given, assume this as the width of a Gaussian PSF
+        # housekeeping variables #
+        filename: Optional[str] = None  # which file we are currently scanning
+        batch_num: int = 0  # which batch in the run
+        frame_num: int = 0  # which frame in the batch
+        section_num: int = 0  # which section in the current image
 
-        ################## variance maps and scalars ####################
+        # PSF width and image #
+        # the map of the PSF, either as given or generated as a Gaussian from "sigma_psf"
+        _psf_image: Optional[np.array] = None
+        # the width of a Gaussian PSF, either given as scalar or fit to PSF map
+        _psf_scalar: Optional[float] = None
 
-        self._input_var = None  # input variance (can be scalar or 2D array)
-        self._var_scalar = None  # either given as scalar or the median of the var map
-        self._var_map = None  # either given as map or just expanded from the scalar
-        self._size_var = None  # the size of the input variance map
-        self._expanded_var = None  # did we expand the input variance map
-        self._default_var_scalar = 1  # if no variance is given, this is used as the variance scalar
-        self._radon_var_map = []  # list of partial Radon variances from either a var_scalar or var_map
-        self._radon_var_map_trans = []  # same thing, for the transposed FRT
+        # variance maps and scalars
+        _var_scalar: Optional[float] = None  # either given as scalar or the median of the var map
+        _var_image: Optional[np.array] = None  # either given as map or just expanded from the scalar
+        _expanded_var: Optional[bool] = None  # did we expand the input variance map
 
-        ####################### Other hidden values #####################
+        # list of partial Radon variances from either a var_scalar or var_map
+        _radon_var_map: List[np.array] = field(default_factory=list)
+        _radon_var_map_tr: List[np.array] = field(default_factory=list)  # same thing, for the transposed FRT
 
-        self.num_frt_calls = 0
+        # other things we keep track of
+        _current_section_corner: Tuple[int, int] = (0, 0)  # keep track of where the current section starts
+        _num_frt_calls: int = 0
 
-    @property
-    def input_var(self):
-        if empty(self._input_var):
-            return self._default_var_scalar
-        else:
-            return self._input_var
+        @property
+        def variance(self):  # the variance value given by user (or the default value)
+            if self._var_image is not None:
+                return self._var_image
+            else:
+                return self.var_scalar
 
-    @input_var.setter
-    def input_var(self, val):
-        # if working with scalar variance, only need to update the scaling of var maps
-        if scalar(val) and scalar(self._input_var):
-            if not empty(self._radon_var_map):
-                self._radon_var_map = [m * val / self.input_var for m in self._radon_var_map]
-            if not empty(self._radon_var_map_trans):
-                self._radon_var_map_trans = [m * val / self.input_var for m in self._radon_var_map_trans]
+        @variance.setter
+        def variance(self, val: Union[float, np.array]):
+            # if working with scalar variance, only need to rescale the var maps
+            if scalar(val) and self._var_scalar is not None:
+                if self._radon_var_map:  # list of length > 0
+                    self._radon_var_map = [im * val / self._var_scalar for im in self._radon_var_map]
+                if self._radon_var_map_tr:  # list of length > 0
+                    self._radon_var_map_tr = [im * val / self._var_scalar for im in self._radon_var_map_tr]
 
-        else:  # new or old input_var is not scalar, must recalculate var maps
-            self.clearVarMap()
+            else:  # new or old variance is not scalar, must recalculate var maps
+                self.clear_var_map()
 
-        self._input_var = val
-        if scalar(val):
-            self._var_scalar = val
-            self._var_map = None
-        else:
-            self._var_scalar = np.median(val)
-            self._var_map = val
+            if scalar(val):
+                self._var_scalar = val
+                self._var_image = None
+            else:
+                self._var_scalar = float(np.median(val))
+                self._var_image = val
 
-    @property
-    def var_scalar(self):
-        if empty(self._var_scalar):
-            return self._default_var_scalar
-        else:
-            return self._var_scalar
+        @property
+        def var_scalar(self):
+            if self._var_scalar is not None:
+                return self._var_scalar
+            else:
+                return self._pars.default_var_scalar
 
-    @property
-    def var_map(self):
-        if empty(self._var_map) and not empty(self.im_size):
-            return self.var_scalar*np.ones(self.im_size)
-        else:
-            return self._var_map
+        @property
+        def var_image(self):
+            if self._var_image is not None:
+                return self._var_image
+            elif self.im_size is not None:
+                return self.var_scalar * np.ones(self.im_size)
+            else:  # cannot make a map without an image size
+                return None
 
-    def __get_input_psf(self):
+        @property
+        def psf(self):
+            return self._psf_image
 
-        return self._input_psf
+        @psf.setter
+        def psf(self, val: Union[float, np.array]):
+            if scalar(val):
+                if val != self._psf_scalar:
+                    self._psf_image = gaussian2D(val, norm=2)
+                    self._psf_scalar = val
+            elif isinstance(val, np.ndarray) and val.ndim == 2:
+                if not np.array_equal(self._psf_image, val):
+                    val /= np.sqrt(np.sum(val ** 2))
+                    if not np.array_equal(self._psf_image, val):
+                        self._psf_image = val
+                        # fit_results = fit_gaussian(val)  # run a short minimization 2D fitter to gaussian
+                        # print(fit_results)
+                        # self._psf_scalar = (fit_results.x[1] + fit_results.x[2]) / 2  # average the x and y sigma
+                        self._psf_scalar = gaussian_width(val)
+            else:
+                raise TypeError("psf must be a scalar or a 2D numpy array.")
 
-    def __set_input_psf(self, val):
+        @property
+        def psf_sigma(self):
+            if self._psf_scalar is not None:
+                return self._psf_scalar
+            else:
+                return self._pars.default_psf_sigma
 
-        if scalar(val):
-            if empty(self.input_psf) or not scalar(self.input_psf) or val != self.input_psf:
-                self._psf = gaussian2D(val)
-                self._sigma_psf = val
+        def clear_var_map(self):  # when we switch to a new image frame
+            self._var_scalar = None  # either given as scalar or the median of the var map
+            self._var_image = None  # either given as map or just expanded from the scalar
+            self._expanded_var = None  # did we expand the input variance map
+            self._radon_var_map = []  # list of partial Radon variances from either a var_scalar or var_map
+            self._radon_var_map_tr = []  # same thing, for transposed FRT
 
-        elif isinstance(val, np.ndarray) and val.ndim == 2:
-            if scalar(self.input_psf) or val.shape != self._input_psf.shape or np.any(val != self.input_psf):
-                self._psf = val
-                a = fit_gaussian(val)  # run a short minimization 2D fitter to gaussian
-                self._sigma_psf = (a.x[1] + a.x[2]) / 2  # average the x and y sigma
+        def clear_psf(self):
+            self._psf_scalar = None
+            self._psf_image = gaussian2D(self.psf_sigma, norm=2)
 
-        else:
-            raise ValueError("input_psf must be a scalar or a numpy array")
+    def __init__(self, **kwargs):
 
-        self._input_psf = val
-        self._psf = self._psf / np.sqrt(np.sum(self._psf ** 2))  # normalized PSF
+        # all the user-defined parameters live here:
+        self.pars = Finder.Pars(**kwargs)
 
-    input_psf = property(__get_input_psf, __set_input_psf)  # just trying out different methods for 'property'
+        # all the input/outputs/intermediate data products live here:
+        self.data = Finder.Data()
 
-    @property
-    def psf(self):
-        if empty(self._input_psf):
-            self.input_psf = self._default_sigma_psf  # go through the setter for input_psf and calculate psf and sigma_psf
+        # objects or lists of objects
+        self.streaks: List[Streak] = field(default_factory=list)  # streaks saved from latest call to input()
 
-        return self._psf
+        # a list of Streak objects that passed the threshold,
+        # saved from all scans (use reset() to remove these)
+        self.streaks_all: List[Streak] = field(default_factory=list)
 
-    @psf.setter
-    def psf(self, val):
-        self.input_psf = val
+        # keep track of the time when this object was initialized
+        self._version_timestamp: float = time.time()
 
-    @property
-    def sigma_psf(self):
-        if empty(self._input_psf):
-            self.input_psf = self._default_sigma_psf  # go through the setter for input_psf and calculate psf and sigma_psf
-
-        return self._sigma_psf
-
-    @sigma_psf.setter
-    def sigma_psf(self, val):
-        self.input_psf = val
-
-    ################# reset methods ###################
-
+    # reset methods #
     def reset(self):  # do this at the start of a new run
 
-        self.snr_values = []
+        self.data.snr_values = []
+        self.data.total_runtime = 0
         self.streaks_all = []
-        self.total_runtime = 0
 
-        self.clearVarMap()
-        self.clearPSF()
+        self.data.clear_var_map()
+        self.data.clear_psf()
 
         self.clear()
 
     def clear(self):  # do this each time we have new images
 
-        self.image = None
-        self.radon_image = None
-        self.radon_image_trans = None
-        self.best_SNR = []
+        self.data.image = None
+        self.data.im_size = None
+        self.data.radon_image = None
+        self.data.radon_image_tr = None
+        self.data.best_snr = 0.0
         self.streaks = []
 
-        self.batch_num = None
-        self.frame_num = None
-        self.section_num = None
+        self.data.batch_num = 0
+        self.data.frame_num = 0
+        self.data.section_num = 0
 
-        self.current_section_corner = (0, 0)
+        self.data._current_section_corner = (0, 0)
+        self.data._num_frt_calls = 0
 
-        self.num_frt_calls = 0
-
-    def clearVarMap(self):  # when we switch to a new image frame
-
-        self._input_var = []  # input variance (can be scalar or 2D array)
-        self._var_scalar = []  # either given as scalar or the median of the var map
-        self._var_map = []  # either given as map or just expanded from the scalar
-        self._size_var = []  # the size of the input variance map
-        self._expanded_var = []  # did we expand the input variance map
-        self._default_var_scalar = 1  # if no variance is given, this is used as the variance scalar
-        self._radon_var_map = []  # list of partial Radon variances from either a var_scalar or var_map
-        self._radon_var_map_trans = []  # same thing, for transposed FRT
-
-    def clearPSF(self):
-
-        self._input_psf = []
-        self._psf = []
-        self._sigma_psf = []
-
-    ################ getters #####################
-
-    def useExpand(self):
-        return not self.use_short
-
-    def getRadonVariance(self, transpose=0):
-        """ Get the partial Radon transforms of the background noise for some transpose.
-            Lazy Reloading: only delete old var-maps if input size changed (or 
-            if we changed expansion mode) and then calculate the var-maps on demand.
-            
+    # getters #
+    def get_radon_variance(self, transpose=False):
+        """
+        Get the partial Radon transforms of the background noise for some transpose.
+        Lazy Reloading: only delete old var-maps if input size changed (or
+        if we changed expansion mode) and then calculate the var-maps on demand.
         """
 
-        # check if we need to recalculate the var map        
-        if not empty(self._size_var) and (
-                not compare_size(self.im_size, self._size_var) or self.useExpand() != self._expanded_var):
-            if self.debug_bit: print("Clearing the Radon var-maps")
-            self._radon_var_map = []  # clear this to be lazy loaded with the right size
-            self._radon_var_map_trans = []
+        # check if we need to recalculate the var map
+        if (
+                self.data.im_size != self.data.var_image.shape
+                or self.pars.use_expand != self.data._expanded_var
+        ):
+            if self.pars.verbosity > 1:
+                print("Clearing the Radon var-maps")
+            self.data._radon_var_map = []  # clear this to be lazy loaded with the right size
+            self.data._radon_var_map_tr = []
 
         # if there is no var map, we need to lazy load it
-        if empty(self._radon_var_map):
-
-            # do we have a variance map or scalar??            
-            # if empty(self._input_var):
-            #     self._input_var = self._default_var_scalar
-            #
-            # if scalar(self._input_var):
-            #     self._var_scalar = self._input_var
-            #     self._var_map = self._input_var * np.ones(self.im_size, dtype='float32')
-            # else:
-            #     self._var_scalar = np.median(self.input_var)
-            #     self._var_map = self._input_var
-
-            self._size_var = self.im_size
-            self._expanded_var = self.useExpand()
-            self._radon_var_map = FRT(self.var_map, partial=True, expand=self._expanded_var, transpose=False)
-            self._radon_var_map_trans = FRT(self.var_map, partial=True, expand=self._expanded_var, transpose=True)
+        if not self.data._radon_var_map:
+            self.data._expanded_var = self.useExpand()
+            self.data._radon_var_map = FRT(self.data.var_image, partial=True, expand=self._expanded_var, transpose=False)
+            self.data._radon_var_map_tr = FRT(self.data.var_image, partial=True, expand=self._expanded_var, transpose=True)
 
         if transpose:
-            return self._radon_var_map_trans
+            return self._radon_var_map_tr
         else:
             return self._radon_var_map
 
-    def getNormFactorPSF(self):
-
+    def get_norm_factor_psf(self):
+        """
+        Factors the normalization of the PSF when calculating S/N
+        """
         return np.sum(self.psf) * np.sqrt(np.sum(self.psf ** 2))
 
-    def getGeometricFactor(self, foldings):
-
+    def get_geometric_factor(self, foldings):
+        """
+        Gets the geometric factor that has to do
+        with the slope of the streak inside each pixel.
+        This depends on the stage in the algorithm
+        (the "foldings") that determines the height
+        of the current slab of the data we are working on.
+        """
         height = 2 ** (foldings - 1)
-        th = np.arctan(np.arange(-height + 1, height) / np.float(height))
-        G = np.maximum(np.fabs(np.cos(th)), np.fabs(np.sin(th)))
-        G = G[:, np.newaxis, np.newaxis]
-        return G
+        th = np.arctan(np.arange(-height + 1, height) / float(height))
+        geom_fact = np.maximum(np.fabs(np.cos(th)), np.fabs(np.sin(th)))
+        geom_fact = geom_fact[:, np.newaxis, np.newaxis]
+        return geom_fact
 
-    ########################## STREAK FINDING #####################################
+    # STREAK FINDING #
+    def make_streak(self, snr, transpose, threshold, peak, foldings, subframe, section):
+        """
 
-    def makeStreak(self, snr, transpose, threshold, peak, foldings, subframe, section):
+        """
         s = Streak(snr=snr, transpose=transpose, threshold=threshold, peak=peak,
                    foldings=foldings, subframe=subframe, section=section)
 
@@ -326,146 +329,170 @@ class Finder:
 
         return s
 
-    def findSingle(self, M, transpose=False, threshold=None):
+    def find_single(self, im, transpose=False, threshold=None):
+        """
 
-        if empty(M):
+        """
+        if im is None or len(im) == 0:
             return None
 
-        self.im_size = imsize(M)
+        self.im_size = im.shape
 
-        if empty(threshold):
-            threshold = self.threshold
+        if threshold is None:
+            threshold = self.pars.threshold  # use default
 
         streak = None
 
-        self.num_frt_calls += 1
+        self.data._num_frt_calls += 1
 
-        if self.use_short:
-
-            R_partial = FRT(M, transpose=transpose, partial=True, expand=False)  # these are raw Radon partial transforms
+        if self.pars.use_short:
+            # these are raw Radon partial transforms:
+            radon_partial = FRT(im, transpose=transpose, partial=True, expand=False)
 
             # divide by the variance map, geometric factor, and PSF norm for each level
-            V = self.getRadonVariance(transpose)
-            G = [self.getGeometricFactor(m) for m in range(2, len(R_partial) + 2)]  # m counts the number of foldings, partials start at 2
-            P = self.getNormFactorPSF()
+            radon_variance_maps = self.get_radon_variance(transpose)
 
-            R_partial = [R_partial[i] / np.sqrt(V[i] * G[i] * P) for i in range(len(R_partial))]
+            # m counts the number of foldings, partials start at 2
+            geometric_factors = [self.get_geometric_factor(m) for m in range(2, len(radon_partial) + 2)]
 
-            R = R_partial[-1][:, 0, :]  # get the final Radon image as 2D map
+            psf_factor = self.get_norm_factor_psf()
 
-            snrs_idx = [np.nanargmax(r) for r in R_partial]  # best index for each folding
-            # snrs_max = np.array([r[i] for i,r in zip(snrs_idx,R_partial)]) # best SNR for each folding
-            snrs_max = np.array([np.nanmax(r) for r in R_partial])  # best SNR for each folding
+            for i in range(len(radon_partial)):  # correct the radon images for all these factors
+                radon_partial[i] /= np.sqrt(radon_variance_maps[i] * geometric_factors[i] * psf_factor)
 
-            best_idx = np.nanargmax(snrs_max)  # which folding has the best SNR
-            best_snr = snrs_max[best_idx]  # what is the best SNR of all foldings
+            radon_image = radon_partial[-1][:, 0, :]  # get the final Radon image as 2D map
 
-            if best_snr >= threshold and 2**best_idx >= self.min_length:
-                peak_coord = np.unravel_index(snrs_idx[best_idx], R_partial[best_idx].shape)  # the x,y,z of the peak in that subframe
+            snrs_idx = [np.nanargmax(r) for r in radon_partial]  # best index for each folding
+            # snrs_max = np.array([r[i] for i, r in zip(snrs_idx, radon_partial)]) # best S/N for each folding
+            snrs_max = np.array([np.nanmax(r) for r in radon_partial])  # best S/N for each folding
 
-                streak = self.makeStreak(snr=best_snr, transpose=transpose, threshold=threshold, peak=peak_coord,
-                                         foldings=best_idx + 2, subframe=R_partial[best_idx], section=M)
+            best_idx = np.nanargmax(snrs_max)  # which folding has the best S/N
+            best_snr = snrs_max[best_idx]  # what is the best S/N of all foldings
+
+            if best_snr >= threshold and 2 ** best_idx >= self.pars.min_length:
+                # the x,y,z of the peak in that subframe:
+                peak_coord = np.unravel_index(snrs_idx[best_idx], radon_partial[best_idx].shape)
+
+                streak = self.make_streak(snr=best_snr, transpose=transpose, threshold=threshold, peak=peak_coord,
+                                          foldings=best_idx + 2, subframe=radon_partial[best_idx], section=im)
 
         else:
 
-            R = FRT(M, transpose=transpose, partial=False, expand=True)
+            radon_image = FRT(im, transpose=transpose, partial=False, expand=True)
 
-            V = self.getRadonVariance(transpose)
-            foldings = len(V) + 1  # the length tells you how many foldings we need
+            radon_variance = self.get_radon_variance(transpose)
+            foldings = len(radon_variance) + 1  # the length tells you how many foldings we need
 
-            V = V[-1][:, 0, :]  # get the last folding and flatten it to 2D
-            G = self.getGeometricFactor(foldings)
-            P = self.getNormFactorPSF
+            radon_variance = radon_variance[-1][:, 0, :]  # get the last folding and flatten it to 2D
+            geom_factor = self.get_geometric_factor(foldings)
+            psf_factor = self.get_norm_factor_psf
 
-            R = R / np.sqrt(V * G * P)
+            radon_image /= np.sqrt(radon_variance * geom_factor * psf_factor)
 
-            R_partial = R[:, np.newaxis, :]  # this is how it would look from a partial transpose output
+            radon_partial = radon_image[:, np.newaxis, :]  # this is how it would look from a partial transpose output
 
-            idx = np.argmax(R)
-            best_snr = R[idx]
+            idx = np.argmax(radon_image)
+            best_snr = radon_image[idx]
 
-            peak_coord = np.unravel_index(idx, R.shape)
-            peak_coord = (peak_coord[0], 0, peak_coord[1])  # added zero for y start position that is often non-zero in the partial transforms
+            peak_coord = np.unravel_index(idx, radon_image.shape)
+            # added zero for y start position that is often non-zero in the partial transforms
+            peak_coord = (peak_coord[0], 0, peak_coord[1])
 
-            streak = self.makeStreak(snr=best_snr, transpose=transpose, threshold=threshold, peak=peak_coord,
-                                     foldings=foldings, subframe=R_partial, section=M)
+            if best_snr >= threshold:
+                streak = self.make_streak(snr=best_snr, transpose=transpose, threshold=threshold, peak=peak_coord,
+                                          foldings=foldings, subframe=radon_partial, section=im)
 
-        self.best_SNR = max(best_snr, self.best_SNR)  # this will always have the best S/N until "clear" is called
+        # this will always have the best S/N until "clear" is called
+        self.data.best_snr = max(best_snr, self.data.best_snr)
 
-        if not empty(streak):
+        if streak:
             self.streaks.append(streak)
-            if self.use_write_cutouts:
-                if empty(self.max_length_to_write) or streak.L<self.max_length_to_write:
+            if self.pars.use_write_cutouts:
+                if self.pars.max_length_to_write is None or streak.L < self.pars.max_length_to_write:
                     streak.write_to_disk()
 
         # store the final FRT result (this is problematic once we start iterating over findSingle!)
         if transpose:
-            self.radon_image_trans = R
+            self.data.radon_image_tr = radon_image
         else:
-            self.radon_image = R
+            self.data.radon_image = radon_image
 
-        if self.debug_bit>1: print("Running FRT %d times, trans= %d, thresh= %f, found streak: %d"
-                                 % (self.num_frt_calls, transpose, threshold, not empty(streak)))
+        if self.pars.verbosity > 1:
+            print(f'Running FRT {self.data._num_frt_calls} times, '
+                  f'transpose= {transpose}, thresh= {threshold:.2f}, '
+                  f'found streak: {bool(streak)}')
 
         return streak
 
-    def findMulti(self, M, threshold=None, num_iter=None):
+    def find_multi(self, im, threshold=None, num_iter=None):
+        """
 
+        """
         if threshold is None:
-            threshold = self.threshold
+            threshold = self.pars.threshold
 
         if num_iter is None:
-            num_iter = self.num_iterations
+            num_iter = self.pars.num_iterations
 
-        for trans in range(2):
+        for trans in [False, True]:
             for i in range(num_iter):
-                new_streak = self.findSingle(M, transpose=trans, threshold=threshold)
-                if empty(new_streak):
+                new_streak = self.find_single(im, transpose=trans, threshold=threshold)
+                if not new_streak:
                     break
                 else:
-                    new_streak.subtractStreak(M)
-                    if self.use_subtract_mean: M -= np.nanmean(M)
+                    new_streak.subtract_streak(im)
+                    if self.pars.use_subtract_mean:
+                        im -= np.nanmean(im)
                     # np.nan_to_num(M, copy=False)
 
-                    if self.use_show:
-                        new_streak.plotLines()
-                        f = plt.gcf()
-                        f.canvas.draw()
-                        f.canvas.flush_events()
-        return M
+                    if self.pars.use_show:
+                        new_streak.plot_lines()
+                        plt.show()
+                        # fig = plt.gcf()
+                        # fig.canvas.draw()
+                        # fig.canvas.flush_events()
+        return im
 
-    def scanThresholds(self, M):
+    def scan_thresholds(self, im, min_threshold=None):
+        """
 
-        self.im_size = imsize(M)
+        """
+        self.im_size = im.shape
 
-        mx = np.nanmax(M/np.sqrt(self.var_map))
+        if min_threshold is None:
+            min_threshold = self.pars.threshold
 
-        N = math.log2(mx/self.threshold)
+        mx = np.nanmax(im / np.sqrt(self.data.var_image))
 
-        thresholds = np.flip(self.threshold * 2**np.arange(N+1))
-        if self.debug_bit>1: print("mx= %f | N= %f | thresholds: %s" % (mx, N, str(thresholds)))
+        dynamic_range = np.log2(mx / min_threshold)
+
+        thresholds = np.flip(min_threshold * 2 ** np.arange(dynamic_range + 1))
+        if self.pars.verbosity > 1:
+            print(f'mx= {mx:.2f} | dynamic_range= {dynamic_range:.2e} | thresholds: {np.round(thresholds, 2)}')
 
         for t in thresholds:
-            # M[M>t] = t
-            mask = np.zeros(M.shape, dtype=bool)
-            np.greater(M/np.sqrt(self.var_map), t/2, where=~np.isnan(M), out=mask)
-            M[mask] = t*np.sqrt(self.var_scalar)
-            if self.use_subtract_mean: M -= np.nanmean(M)
-            # np.nan_to_num(M, copy=False)
+            mask = np.zeros(im.shape, dtype=bool)
+            np.greater(im / np.sqrt(self.data.var_image), t / 2, where=np.isnan(im) == 0, out=mask)
+            im[mask] = t * np.sqrt(self.data.var_scalar)  # clip to threshold (scaled by noise)
+            if self.pars.use_subtract_mean:
+                im -= np.nanmean(im)
 
-            if self.use_show:
+            if self.pars.use_show:
                 plt.clf()
-                plt.imshow(M)
-                plt.title("section corner: %s" % (str(self.current_section_corner)) )
-                plt.xlabel("psf_sigma= %f | threshold= %f" % (self.sigma_psf, t))
-                f = plt.gcf()
-                f.canvas.draw()
-                f.canvas.flush_events()
+                plt.imshow(im)
+                plt.title(f'section corner: {self.data._current_section_corner}')
+                plt.xlabel(f'psf_sigma= {self.data.psf_sigma:.2f} | threshold= {t:.2f}')
+                plt.show()
+                # f = plt.gcf()
+                # f.canvas.draw()
+                # f.canvas.flush_events()
 
-            M = self.findMulti(M, t)
+            im = self.find_multi(im, t)
 
     def preprocess(self, M):
+        """
 
+        """
         M_new = M
 
         if self.use_subtract_mean: M_new = M_new - np.nanmean(M_new)  # remove the mean
@@ -476,8 +503,10 @@ class Finder:
 
         return M_conv
 
-    def scanSections(self): # to be depricated!
+    def scan_sections(self): # to be depricated!
+        """
 
+        """
         corners = []
         sections = jigsaw(self.image, self.size_sections, output_corners=corners)
 
@@ -488,8 +517,7 @@ class Finder:
 
             self.scanThresholds(this_section)
 
-
-    ########################## INPUT METHOD #######################################
+    # User interface #
 
     def input(self, image, variance=None, psf=None, filename=None, batch_num=None):
         """
@@ -557,6 +585,7 @@ class Finder:
             f.canvas.draw()
             f.canvas.flush_events()
 
+
 if __name__ == "__main__":
     f = Finder()
-    f.findSingle(np.random.normal(0, 1, (512, 512)))
+    f.find_single(np.random.normal(0, 1, (512, 512)))

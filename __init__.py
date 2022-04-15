@@ -5,7 +5,7 @@ Created on Thu Dec 21 14:04:16 2017
 @author: guyn
 """
 #
-from pyradon.finder import Finder 
+# from pyradon.finder import Finder
 #from pyradon.simulator import Simulator
 #from pyradon.streak import Streak
 

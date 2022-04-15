@@ -6,21 +6,21 @@ Created on Sun April 8 15:54:00 2018
 """
         
 from __future__ import division   
-import numpy as np        
-import math
+import numpy as np
 import matplotlib.pyplot as plt
 import warnings
 
-from numba import njit
 
 def empty(array):
-    if array is not None and np.asarray(array).size>0:
+    if array is not None and np.asarray(array).size > 0:
         return False
     else:
-        return True 
-        
+        return True
+
+
 def scalar(array):
     return (not hasattr(array, '__len__')) and (not isinstance(array, str))
+
 
 def imsize(array):
     if empty(array):
@@ -35,15 +35,17 @@ def imsize(array):
         
     raise Exception("input to IMSIZE is not an image or a scalar or a two-element vector")
 
+
 def compare_size(first, second):
-    return np.all(np.array(first)==np.array(second))
+    return np.all(np.array(first) == np.array(second))
+
 
 def crop2size(image, im_size):
 
-    if np.asarray(im_size).size==1:
+    if np.asarray(im_size).size == 1:
         im_size = np.ones((2,))*np.asscalar(im_size)
 
-    if image.dims==2:
+    if image.dims == 2:
         h,w = image.shape
         gap_h = np.maximum(0, (h-im_size[0])//2)
         gap_w = np.maximum(0, (w-im_size[1])//2)
@@ -55,43 +57,39 @@ def crop2size(image, im_size):
         gap_h = np.maximum(0, (h-im_size[0])//2)
         gap_w = np.maximum(0, (w-im_size[1])//2)
         return image[:, gap_h:-gap_h, gap_w:-gap_w]
-    
+
+
 def gaussian2D(sigma_x=2, sigma_y=None, rotation_radians=0, offset_x=0, offset_y=0, size=None, norm=1):
         
-        if empty(sigma_y):
+        if sigma_y is None:
             sigma_y = sigma_x
         
-        if empty(size):
-            size = (np.maximum(sigma_x, sigma_y)*20).item(0)
+        if size is None:
+            size = max(sigma_x, sigma_y) * 20
         
-        if np.size(size)==1:
+        if np.size(size) == 1:
             size = (np.asarray(size)).item(0)
             size = (size, size)
-                
-        # x = np.linspace(-(size[1]-1)/2,(size[1]-1)/2,size[1])
-        # y = np.linspace(-(size[0]-1)/2,(size[0]-1)/2,size[0])
-        # xgrid,ygrid = np.meshgrid(x,y)
 
         size = (round(size[0]), round(size[1]))
 
-        (y0,x0) = np.indices(size, dtype='float32')
+        (y0, x0) = np.indices(size, dtype='float32')
         
-        x0-=size[1]/2
-        y0-=size[0]/2
+        x0 -= size[1] / 2
+        y0 -= size[0] / 2
         
-        x = x0*math.cos(rotation_radians) + y0*math.sin(rotation_radians) - offset_x
-        y = -x0*math.sin(rotation_radians) + y0*math.cos(rotation_radians) - offset_y
+        x = x0 * np.cos(rotation_radians) + y0 * np.sin(rotation_radians) - offset_x
+        y = -x0 * np.sin(rotation_radians) + y0 * np.cos(rotation_radians) - offset_y
         
-        G = np.exp(-0.5*(x**2/sigma_x**2+y**2/sigma_y**2))
-        if norm==0:
-            pass
-        elif norm==1:
-            G = G/np.sum(G)
-        elif norm==2:
-            G = G/math.sqrt(np.sum(G**2))
+        output_gaussian = np.exp(-0.5 * ((x / sigma_x) ** 2 + (y / sigma_y) ** 2))
+        if norm == 1:
+            output_gaussian /= np.sum(output_gaussian)
+        elif norm == 2:
+            output_gaussian /= np.sqrt(np.sum(output_gaussian ** 2))
         
-        return G
-        
+        return output_gaussian
+
+
 def fit_gaussian(data):
 
     from scipy.optimize import minimize    
@@ -106,11 +104,30 @@ def fit_gaussian(data):
     x0 = np.array([peak, width, width, rotation, offset_x, offset_y])    
     
     def min_func(x):
-        g = x[0]*gaussian2D(x[1], x[2], x[3], x[4], x[5], size=data.shape)
-        return np.sum((g-data)**2)
+        g = x[0] * gaussian2D(x[1], x[2], x[3], x[4], x[5], size=data.shape)
+        return np.sum((g - data) ** 2)
     
-    return minimize(min_func, x0, options={'disp':False})
-    
+    return minimize(min_func, x0, options={'disp': False})
+
+
+def gaussian_width(im):
+    """
+    Estimate the width of an image "im" with
+    a 2D gaussian, using the FWHM of the image
+    and calculating the gaussian sigma from that.
+    """
+
+    sizes = np.array(im.shape)
+    factor = np.round(min(300.0 / sizes))
+    if factor > 1:
+        im = upsample(im, factor)  # make sure to calculate this on an upsampled image
+
+    pix_above_half = np.sum(im > np.max(im) * 0.5)
+    fwhm = 2 * np.sqrt(pix_above_half / np.pi)  # assume circular peak
+
+    return fwhm / 2.355 / factor
+
+
 def model(im_size, x1, x2, y1, y2, sigma, replace_value=0, threshold=1e-10, oversample=4):
 
     if empty(im_size):
@@ -182,6 +199,25 @@ def model(im_size, x1, x2, y1, y2, sigma, replace_value=0, threshold=1e-10, over
     M[M<threshold] = replace_value
     
     return M
+
+
+def upsample(im, factor=2):
+    """
+    Use FFT interpolation (sinc interp) to up-sample
+    the given image by a factor (default 2).
+    """
+
+    from numpy.fft import fft2, ifft2, fftshift
+
+    before = [int(np.floor(s * (factor - 1) / 2)) for s in im.shape]
+    after = [int(np.ceil(s * (factor - 1) / 2)) for s in im.shape]
+
+    im_f = fftshift(fft2(fftshift(im)))
+    im_pad_f = np.pad(im_f, [(before[0], after[0]), (before[1], after[1])])
+    im_new = fftshift(ifft2(fftshift(im_pad_f)))
+
+    return im_new
+
 
 def downsample(I, factor=2, normalization='sum'):
     

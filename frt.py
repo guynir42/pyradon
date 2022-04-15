@@ -8,7 +8,7 @@ Created on Thu Dec 21 13:56:51 2017
 import numpy as np
 import math
 
-from pyradon.utils import empty
+from utils import empty
 
 from numba import njit
 
