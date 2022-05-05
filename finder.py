@@ -1,13 +1,6 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Sun Dec 24 15:43:28 2017
-
-@author: guyn
-"""
 import sys
 import os
 import time
-import math
 import numpy as np
 import scipy.signal
 import matplotlib.pyplot as plt
@@ -18,7 +11,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from streak import Streak
 from frt import FRT
-from utils import empty, scalar, compare_size, imsize, crop2size, gaussian2D, fit_gaussian, gaussian_width, jigsaw
+from utils import scalar, crop2size, gaussian2D, gaussian_width, jigsaw
 
 
 class Finder:
@@ -27,33 +20,59 @@ class Finder:
     Give it some images, using self.input(images, ...)
     This will do all the internal calculations needed to find streaks
     inside each frame. Optional arguments to "input" are:
-     -variance: give a scalar (average) variance *or* a variance map. 
-      At some point we may also allow giving a 3D matrix of
-      variance maps for each image in the batch. 
+     -variance: give a scalar (average) variance *or* a variance map.
      -psf: give the point spread function as a scalar width (in this 
-      case the PSF is a 2D Gaussian with sigma equal to the input 
-      scalar) *or* a map for the image. PSF can be 3D matrix with a 
-      number of slices as the number of images. 
-     -batch number: housekeeping parameter. Helps keep track of where 
-      each streak was found.
-     -filename: housekeeping parameter. Helps keep track of where 
-      each streak was found.
+      case the PSF is a 2D Gaussian with sigma equal to the input scalar)
+      *or* a map for the image.
+     -frame_num: housekeeping parameter saved to output Streak objects.
+     Helps keep track of where each streak was found.
+     -batch_num: housekeeping parameter saved to output Streak objects.
+     Helps keep track of where each streak was found.
+     -filename: housekeeping parameter saved to output Streak objects.
+     Helps keep track of where each streak was found.
    
-    SWITCHES AND SETTINGS (see comments in properties block for more details)
+    SWITCHES AND SETTINGS (see __init__() for more details)
     -Image pre-processing: use_subtract_mean, use_conv, use_crop_image, crop_size.
     -Search options: use_short, min_length
     -Post processing: use_exclude, exclude_dx, exclude_dy
     -memory considerations: use_save_images, use_clear_memory.
     -housekeeping: filename, batch_num, frame_num.
-    -display defaults: show_bit, display_index, display_which, line_offset,
+    -display defaults: use_show, display_index, display_which, line_offset,
      rect_size, display_monochrome.
 
-    NOTES: -the Radon image that is saved in each streak is already normalized
-          by the variance map.
-         -If you remove stars or streaks that were found in previous iterations,
-          make sure to replace them with NaN. Then use_subtract_mean will ignore
-          these pixels when finding the mean. Finally, the NaNs are replaced
-          by zero after reducing the mean.
+    ALGORITHMS:
+    1) Individual images are scanned with the Fast Radon Transform (FRT)
+       that does something similar to FFT to sum pixel values along straight
+       lines, finding the peaks and saving them as Streak objects.
+       The input images must be matched-filtered using an estimate
+       of the system PSF. This is also true for point-source detection.
+       The FRT of the input image must be divided by an FRT of a
+       variance map to normalize the noise and the number of pixels
+       in the streak, before any S/N calculations can be made.
+       See https://ui.adsabs.harvard.edu/abs/2018AJ....156..229N/abstract
+    2) To make sure all streaks are found, regardless of brightness,
+       there are some steps you need to take.
+       Each image must be background subtracted, and once streaks
+       are found they need to be subtracted (and b/g resubtracted)
+       before searching for other, possibly fainter streaks.
+       This object will search a set of thresholds, starting with
+       the S/N of the brightest objects in the image, and scanning
+       with a threshold that is 2 times smaller on every iteration.
+       Before applying a smaller threshold, all pixels in the image
+       with point-wise S/N above half the threshold are truncated.
+       This removes artefacts and stars, but does not remove streaks,
+       that have an aggregated S/N that is above threshold, even
+       though each pixel in the streak is below threshold.
+
+    NOTES:
+        -the input image can be altered by the process (streak subtraction).
+         If you need that image, make a copy of it before inputting.
+        -the Radon image that is saved in each streak is already normalized
+         by the variance map.
+        -If you remove stars or streaks that were found in previous iterations,
+         make sure to replace them with NaN. Then use_subtract_mean will ignore
+         these pixels when finding the mean. Finally, the NaNs are replaced
+         by zero after reducing the mean and before entering the transfrom.
  
     """
 
@@ -75,7 +94,7 @@ class Finder:
         use_short: bool = True  # search for short streaks
         min_length: int = 32  # minimal length (along the axis) for short streaks
         threshold: float = 5  # in units of S/N
-        num_iterations: int = 5  # how many times to go over the same image to look for streaks (per threshold/per section)
+        num_iterations: int = 5  # times to search same image for streaks (per threshold, per section)
         use_exclude: bool = True
         exclude_x_pix: Optional[Tuple[int, int]] = (-50, 50)
         exclude_y_pix: Optional[Tuple[int, int]] = None
@@ -86,10 +105,10 @@ class Finder:
         use_write_cutouts: bool = False  # ...
         max_length_to_write: int = 128  # ...
 
-        default_psf_sigma: float = 1  # if no PSF is given, assume this as the width of a Gaussian PSF
-        default_var_scalar: float = 1  # if no variance is given, this is used as the variance scalar
+        default_psf_sigma: float = 1  # if no PSF is given, assume this as the width of a Gaussian PSF (pixels)
+        default_var_scalar: float = 1  # if no variance is given, this is used as the variance scalar (counts^2)
 
-        verbosity: int = 1
+        verbosity: int = 1  # level of output feedback (higher: more outputs, zero: silent operations)
 
         @property
         def use_expand(self):
@@ -105,7 +124,6 @@ class Finder:
 
         # images #
         image: np.array = None  # image as given to finder
-        im_size: Optional[Tuple[int, int]] = None  # two-element tuple
         radon_image: np.array = None  # final FRT result (normalized by the var-map)
         radon_image_tr: np.array = None  # final FRT of the transposed image (normalized)
 
@@ -116,9 +134,9 @@ class Finder:
 
         # housekeeping variables #
         filename: Optional[str] = None  # which file we are currently scanning
-        batch_num: int = 0  # which batch in the run
-        frame_num: int = 0  # which frame in the batch
-        section_num: int = 0  # which section in the current image
+        frame_num: Optional[int] = None  # which frame in the batch
+        batch_num: Optional[int] = None  # which batch in the run
+        section_num: Optional[int] = None  # which section in the current image
 
         # PSF width and image #
         # the map of the PSF, either as given or generated as a Gaussian from "sigma_psf"
@@ -132,7 +150,7 @@ class Finder:
         _expanded_var: Optional[bool] = None  # did we expand the input variance map
 
         # list of partial Radon variances from either a var_scalar or var_map
-        _radon_var_map: List[np.array] = field(default_factory=list)
+        _radon_var_map: List[np.array] = field(default_factory=list)  # each list item is for a different folding
         _radon_var_map_tr: List[np.array] = field(default_factory=list)  # same thing, for the transposed FRT
 
         # other things we keep track of
@@ -149,6 +167,11 @@ class Finder:
         @variance.setter
         def variance(self, val: Union[float, np.array]):
             # if working with scalar variance, only need to rescale the var maps
+            if val is None:  # to clear the variance, set it to None
+                self._var_scalar = None
+                self._var_image = None
+                return
+
             if scalar(val) and self._var_scalar is not None:
                 if self._radon_var_map:  # list of length > 0
                     self._radon_var_map = [im * val / self._var_scalar for im in self._radon_var_map]
@@ -176,13 +199,15 @@ class Finder:
         def var_image(self):
             if self._var_image is not None:
                 return self._var_image
-            elif self.im_size is not None:
-                return self.var_scalar * np.ones(self.im_size)
+            elif self.image is not None:
+                return self.var_scalar * np.ones(self.image.shape)
             else:  # cannot make a map without an image size
                 return None
 
         @property
         def psf(self):
+            if self._psf_image is None:
+                self.psf = self.psf_sigma
             return self._psf_image
 
         @psf.setter
@@ -211,8 +236,8 @@ class Finder:
                 return self._pars.default_psf_sigma
 
         def clear_var_map(self):  # when we switch to a new image frame
-            self._var_scalar = None  # either given as scalar or the median of the var map
-            self._var_image = None  # either given as map or just expanded from the scalar
+            # self._var_scalar = None  # either given as scalar or the median of the var map
+            # self._var_image = None  # either given as map or just expanded from the scalar
             self._expanded_var = None  # did we expand the input variance map
             self._radon_var_map = []  # list of partial Radon variances from either a var_scalar or var_map
             self._radon_var_map_tr = []  # same thing, for transposed FRT
@@ -228,6 +253,7 @@ class Finder:
 
         # all the input/outputs/intermediate data products live here:
         self.data = Finder.Data()
+        self.data._pars = self.pars
 
         # objects or lists of objects
         self.streaks: List[Streak] = field(default_factory=list)  # streaks saved from latest call to input()
@@ -240,7 +266,12 @@ class Finder:
         self._version_timestamp: float = time.time()
 
     # reset methods #
-    def reset(self):  # do this at the start of a new run
+    def reset(self):
+        """
+        Reset all the long-persisting
+        data fields and objects.
+        Do this at the start of a new run.
+        """
 
         self.data.snr_values = []
         self.data.total_runtime = 0
@@ -251,10 +282,12 @@ class Finder:
 
         self.clear()
 
-    def clear(self):  # do this each time we have new images
-
+    def clear(self):
+        """
+        Clears intermediate results.
+        Do this each time you input new images.
+        """
         self.data.image = None
-        self.data.im_size = None
         self.data.radon_image = None
         self.data.radon_image_tr = None
         self.data.best_snr = 0.0
@@ -271,14 +304,15 @@ class Finder:
     def get_radon_variance(self, transpose=False):
         """
         Get the partial Radon transforms of the background noise for some transpose.
-        Lazy Reloading: only delete old var-maps if input size changed (or
-        if we changed expansion mode) and then calculate the var-maps on demand.
+        Lazy Reloading: only delete old var-maps if input size changed
+        (or if we changed expansion mode) and then calculate the var-maps on demand.
         """
-
         # check if we need to recalculate the var map
         if (
-                self.data.im_size != self.data.var_image.shape
-                or self.pars.use_expand != self.data._expanded_var
+                self.data.image is not None
+                and self.data.var_image is not None
+                and (self.data.image.shape != self.data.var_image.shape
+                or self.pars.use_expand != self.data._expanded_var)
         ):
             if self.pars.verbosity > 1:
                 print("Clearing the Radon var-maps")
@@ -287,20 +321,30 @@ class Finder:
 
         # if there is no var map, we need to lazy load it
         if not self.data._radon_var_map:
-            self.data._expanded_var = self.useExpand()
-            self.data._radon_var_map = FRT(self.data.var_image, partial=True, expand=self._expanded_var, transpose=False)
-            self.data._radon_var_map_tr = FRT(self.data.var_image, partial=True, expand=self._expanded_var, transpose=True)
+            self.data._expanded_var = self.pars.use_expand
+            self.data._radon_var_map = FRT(
+                self.data.var_image,
+                partial=True,
+                expand=self.data._expanded_var,
+                transpose=False
+            )
+            self.data._radon_var_map_tr = FRT(
+                self.data.var_image,
+                partial=True,
+                expand=self.data._expanded_var,
+                transpose=True
+            )
 
         if transpose:
-            return self._radon_var_map_tr
+            return self.data._radon_var_map_tr
         else:
-            return self._radon_var_map
+            return self.data._radon_var_map
 
     def get_norm_factor_psf(self):
         """
         Factors the normalization of the PSF when calculating S/N
         """
-        return np.sum(self.psf) * np.sqrt(np.sum(self.psf ** 2))
+        return np.sum(self.data.psf) * np.sqrt(np.sum(self.data.psf ** 2))
 
     def get_geometric_factor(self, foldings):
         """
@@ -309,6 +353,18 @@ class Finder:
         This depends on the stage in the algorithm
         (the "foldings") that determines the height
         of the current slab of the data we are working on.
+
+        Parameters
+        ----------
+        foldings: scalar int
+            The number of logarithmic folds the data has taken.
+            There are 2**(foldings-1) lines of the original image
+            in each sub-image that was folded this many times.
+
+        Returns
+        -------
+        The geometric factor that adjusts the S/N of the results
+        based on the streak angle through the pixels.
         """
         height = 2 ** (foldings - 1)
         th = np.arctan(np.arange(-height + 1, height) / float(height))
@@ -319,30 +375,96 @@ class Finder:
     # STREAK FINDING #
     def make_streak(self, snr, transpose, threshold, peak, foldings, subframe, section):
         """
+        Generate a Streak object based on
+        the data recovered from the Radon image.
 
+        Parameters
+        ----------
+        snr: scalar float
+            The adjusted S/N for this streak.
+        transpose: scalar boolean
+            Checks if the streak was found in the
+            original image or in it's transpose.
+        threshold: scalar float
+            The threshold on S/N used to detect this streak.
+        peak: 3-tuple of int
+            The 3D index of the maximum of the subframe
+            where the streak was found (encodes streak position).
+        foldings: scalar int
+            The number logarithmic folds the data has undergone
+            to allow detection of this streak.
+            There are 2**(foldings-1) lines of the original
+            image in each sub-image with this many foldings.
+        subframe: np.array of floats
+            Partially transformed image where Streak was found.
+            For long streaks this is the same as the final
+            Radon image.
+        section: np.array of floats
+            ?
+
+        Returns
+        -------
+        A Streak object, with all values calculated.
         """
         s = Streak(snr=snr, transpose=transpose, threshold=threshold, peak=peak,
                    foldings=foldings, subframe=subframe, section=section)
 
-        s.update_from_finder(self)
-        s.calculate()
+        s.update_from_finder(self)  # get additional values not given in __init__()
+        s.calculate()  # calculate all internal quantities for this streak
 
         return s
 
     def find_single(self, im, transpose=False, threshold=None):
         """
+        Find a single streak in a single image.
+
+        Parameters
+        ----------
+        im: 2D np.array of floats (or None)
+            The image to be scanned for streaks.
+            Should be 2D, with stars and background
+            fully subtracted.
+        transpose: scalar boolean
+            Has this image been transposed.
+            If so, that has some bearing on
+            the output Streak object (e.g.,
+            replacing x->y values).
+            This DOES NOT APPLY A TRANSPOSE
+            on the input image, but assumes
+            it has already been transposed.
+        threshold: scalar float
+            The minimal S/N for finding streaks.
+
+        Returns
+        -------
+        A single Streak object, if found.
+        If no streaks are detected, returns None.
+        If input "im" is None, silently returns None.
+        If a streak is detected, it is also added to
+        self.streaks, that can be cleared using
+        self.clear().
+
+        Note on iterations
+        ------------------
+        This can be called multiple times on the same
+        image (or section of the image).
+        Using transpose, and a cascade of different thresholds,
+        and removing each individual streak can allow
+        identification of multiple streaks in the same image.
+        In that case, find_single() will be called many times.
+        Use self.data._num_frt_calls to figure out how many
+        calls to this function were done on the entire image.
+        (this number is set to zero in self.clear()).
 
         """
         if im is None or len(im) == 0:
             return None
 
-        self.im_size = im.shape
-
         if threshold is None:
             threshold = self.pars.threshold  # use default
 
         streak = None
-
+        self.data.image = im
         self.data._num_frt_calls += 1
 
         if self.pars.use_short:
@@ -376,7 +498,7 @@ class Finder:
                 streak = self.make_streak(snr=best_snr, transpose=transpose, threshold=threshold, peak=peak_coord,
                                           foldings=best_idx + 2, subframe=radon_partial[best_idx], section=im)
 
-        else:
+        else:  # don't use short streaks
 
             radon_image = FRT(im, transpose=transpose, partial=False, expand=True)
 
@@ -426,6 +548,36 @@ class Finder:
 
     def find_multi(self, im, threshold=None, num_iter=None):
         """
+        Run streak detection on the same image (or subsection)
+        multiple times, for both the transposed and original image.
+        At each iteration, any streaks found are removed from
+        the original image, before calling find_single() again.
+        The original and transposed images each get processed
+        up to "num_iter" times. If no streaks are found, the
+        iterations are cut short (but the image is always
+        checked at least twice, for the two transpositions).
+        Streak detection is done on a single threshold value.
+
+        Parameters
+        ----------
+        im: np.array of floats
+            An image (or subset of images) to be scanned
+            for streaks. The image will be modified
+            by removing streaks and adjusting the mean
+            background level.
+        threshold: scalar float
+            The minimal S/N for streaks to be detected in
+            the given image. Defaults to self.pars.threshold (7.5).
+
+        num_iter: scalar int
+            The maximum number of streaks to find in each
+            transposition of the image. When no streaks are
+            found, the number of iterations is smaller.
+            Defaults to self.pars.num_iterations (5).
+
+        Returns
+        -------
+        The image given, after subtracting any found streaks.
 
         """
         if threshold is None:
@@ -440,10 +592,9 @@ class Finder:
                 if not new_streak:
                     break
                 else:
-                    new_streak.subtract_streak(im)
+                    new_streak.subtract_streak(im)  # remove the streak from input image
                     if self.pars.use_subtract_mean:
                         im -= np.nanmean(im)
-                    # np.nan_to_num(M, copy=False)
 
                     if self.pars.use_show:
                         new_streak.plot_lines()
@@ -455,9 +606,37 @@ class Finder:
 
     def scan_thresholds(self, im, min_threshold=None):
         """
+        Iteratively call find_multi() on several values of
+        the threshold. This enables detection of both
+        bright and faint streaks in the same image.
+        Before running a scan with a given threshold,
+        pixels with point-wise S/N above half the threshold
+        are truncated, leaving only streaks able to pass the
+        threshold because the aggregated S/N of their pixels
+        is generally higher than the S/N of each pixel.
 
+        Any streaks that are found are subtracted inside
+        the find_multi() function.
+
+        Parameters
+        ----------
+        im: np.array of floats
+            An image (or subset of images) to be scanned
+            for streaks. The image will be modified
+            by removing streaks and adjusting the mean
+            background level.
+        min_threshold: scalar float
+            The minimal threshold level to scan.
+            This determines the total number of iterations
+            and also the faintest streaks to be detected.
+            Defaults to self.pars.threshold.
+
+        Returns
+        -------
+        The image is returned after all adjustments
+        and streak subtraction. The input image is
+        modified directly, but returned as a convenience.
         """
-        self.im_size = im.shape
 
         if min_threshold is None:
             min_threshold = self.pars.threshold
@@ -473,7 +652,7 @@ class Finder:
         for t in thresholds:
             mask = np.zeros(im.shape, dtype=bool)
             np.greater(im / np.sqrt(self.data.var_image), t / 2, where=np.isnan(im) == 0, out=mask)
-            im[mask] = t * np.sqrt(self.data.var_scalar)  # clip to threshold (scaled by noise)
+            im[mask] = t / 2 * np.sqrt(self.data.var_scalar)  # clip to threshold (scaled by noise)
             if self.pars.use_subtract_mean:
                 im -= np.nanmean(im)
 
@@ -489,98 +668,144 @@ class Finder:
 
             im = self.find_multi(im, t)
 
-    def preprocess(self, M):
+        return im
+
+    def preprocess(self, im):
         """
+        Run basic processing required before submitting the image
+        into the streak detection code.
+        The two operations are
+        1) background subtraction (by removing the image mean).
+           This only happens if self.pars.use_subtract_mean=True.
+        2) Matched-filter using an estimate of the image PSF.
+           This is done by running a 2D convolution using the PSF
+           image (which defaults to a Gaussian with sigma=2).
+
+        Parameters
+        ----------
+        im: np.array of floats
+            The image to be processed before sending it to
+            the streak detection algorithm.
+
+        Returns
+        -------
+        Another np.array of the same size as "im",
+        after background subtraction and PSF filtering.
 
         """
-        M_new = M
 
-        if self.use_subtract_mean: M_new = M_new - np.nanmean(M_new)  # remove the mean
-        # np.nan_to_num(M, copy=False)
+        if self.pars.use_subtract_mean:
+            im = im - np.nanmean(im)  # remove the mean
+        # np.nan_to_num(im, copy=False)
         # should we also remove cosmic rays/bad pixels at this level?
 
-        M_conv = scipy.signal.convolve2d(M_new,self.psf,mode='same')
+        im_conv = scipy.signal.convolve2d(im, self.data.psf, mode='same')
 
-        return M_conv
+        return im_conv
 
-    def scan_sections(self): # to be depricated!
-        """
-
-        """
-        corners = []
-        sections = jigsaw(self.image, self.size_sections, output_corners=corners)
-
-        for i in range(sections.shape[0]):
-            this_section = self.preprocess(sections[i])
-            self.current_section_corner = corners[i]
-            # treat the var map for each section right here!
-
-            self.scanThresholds(this_section)
+    # def scan_sections(self):  # to be depricated!
+    #     """
+    #
+    #     """
+    #     corners = []
+    #     sections = jigsaw(self.image, self.size_sections, output_corners=corners)
+    #
+    #     for i in range(sections.shape[0]):
+    #         this_section = self.preprocess(sections[i])
+    #         self.current_section_corner = corners[i]
+    #         # treat the var map for each section right here!
+    #
+    #         self.scanThresholds(this_section)
 
     # User interface #
 
-    def input(self, image, variance=None, psf=None, filename=None, batch_num=None):
+    def input(self, image, variance=None, psf=None, filename=None, batch_num=None, frame_num=None):
         """
         Input an image and search for streaks in it.
-        Inputs: -images (expect numpy array, can be 3D)
-                -variance (can be scalar or map of noise variance)
-                -psf: point spread function of the image (scalar gaussian sigma or map)
-                -filename: for tracking the source of discovered streaks
-                -batch_num: if we are running many batches in this run
+        This function runs the full suite of processing
+        the Finder object can run, doing all the work
+        to find as many streaks at multiple brightness
+        levels as possible.
+        Ideally, this should be the direct function called
+        by the user.
+
+        Parameters
+        ----------
+        image: np.array
+            The image to be processed.
+        variance: scalar float or 2D np.array of floats
+            An estimate of the noise variance, including
+            noise from the background and const sources.
+            Can be a scalar representing the average noise,
+            or a map of the same size as the input image.
+            If not given, will use the existing variance map
+            (i.e., it can be given once for a series of different
+            images) or use the default in self.pars.default_var_scalar.
+        psf: scalar float or 2D np.array of floats
+            The Point Spread Function of the image (or images).
+            Can give either a scalar (gaussian sigma) or a 2D np.array.
+            The array is usually smaller than the input image.
+        filename: string
+            Used for tracking the origin of any discovered streaks.
+        batch_num: scalar int
+            Used for tracking the origin of any discovered streaks.
+            Useful if we are running many batches in this run.
+        frame_num: scalar int
+            Used for tracking the origin of any discovered streaks.
+            Useful if each batch contains multiple frames/images.
+
         """
 
-        if empty(image):
+        if not isinstance(image, np.ndarray):
             raise Exception("Cannot do streak finding without an image!")
 
-        self.clear()
+        self.clear()  # get rid of intermediate results
 
-        if self.use_crop:
-            image = crop2size(image, self.crop_size)
+        # use this to trim edge rows, or to fit into a power of 2
+        if self.pars.use_crop:
+            image = crop2size(image, self.pars.crop_size)
 
-        self.im_size = imsize(image)
-        self.image = image
-
-        self.filename = filename
+        self.data.image = image
 
         # input the variance, if given!
-        if not empty(variance):
-            if not scalar(variance) and self.use_crop:
-                self.input_var = crop2size(variance, self.crop_size)
+        if variance:
+            if not scalar(variance) and self.pars.use_crop:
+                self.data.variance = crop2size(variance, self.pars.crop_size)
             else:
-                self.input_var = variance
+                self.data.variance = variance
 
         # input the PSF if given! 
-        if not empty(psf):
-            self.input_psf = psf
+        if psf:
+            self.data.psf = psf
 
         # housekeeping 
-        self.filename = filename
-        self.batch_num = batch_num
+        self.data.filename = filename
+        self.data.batch_num = batch_num
+        self.data.frame_num = frame_num
 
-        corners = []
+        corners = []  # this can be modified by jigsaw()
 
-        if self.use_sections:
-            sections = jigsaw(image, self.size_sections, output_corners=corners)
+        if self.pars.use_sections:
+            sections = jigsaw(image, self.pars.size_sections, output_corners=corners)
         else:
-            sections = image[np.newaxis,...]
+            sections = image[np.newaxis, ...]  # just give it one more dimension
 
         for i in range(sections.shape[0]):
 
-            if not empty(corners):
-                self.current_section_corner = corners[i]
+            if corners:
+                self.data._current_section_corner = corners[i]
 
-            sec = sections[i,:,:]
-            # (m,v) = image_stats(sec)
+            sec = sections[i, :, :]
             sec = self.preprocess(sec)
-            self.scanThresholds(sec)
+            self.scan_thresholds(sec)
 
-        if self.use_show:
+        if self.pars.use_show:
             plt.clf()
-            h = plt.imshow(self.image)
-            h.set_clim(0,5*np.sqrt(self.var_scalar))
+            h = plt.imshow(self.data.image)
+            h.set_clim(0, 5*np.sqrt(self.data.var_scalar))
             [streak.plotLines(im_type='full') for streak in self.streaks]
             plt.title("full frame image")
-            plt.xlabel(self.filename)
+            plt.xlabel(self.data.filename)
             f = plt.gcf()
             f.canvas.draw()
             f.canvas.flush_events()
@@ -588,4 +813,7 @@ class Finder:
 
 if __name__ == "__main__":
     f = Finder()
-    f.find_single(np.random.normal(0, 1, (512, 512)))
+    im = np.random.normal(0, 1, (512, 512))
+    # f.find_single(im)
+    # f.find_multi(im)
+    f.input(im)

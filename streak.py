@@ -37,8 +37,6 @@ class Streak:
     
     def __init__(self, snr=None, transpose=False, threshold=None, peak=None, foldings=None, subframe=None, section=None):
 
-        self.im_size = None  # size of original image. updated directly from finder
-
         self.image = None  # subtracted image, as given to finder. updated directly from finder
         self.radon_image = None  # full Radon image for the correct transposition. updated directly from finder
         self.subframe = subframe  # subframe where streak is detected. For non-short streaks, equal to "radon_image".

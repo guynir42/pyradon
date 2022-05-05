@@ -42,12 +42,13 @@ def test_finder_data_variance():
     assert data.var_image is None
 
     # add an image size
-    data.im_size = (128, 160)
+    data.image = np.random.rand(128, 160)
     assert data.var_image.shape == (128, 160)
     assert data.var_image[0, 0] == 4.5
 
     # reset the variance and make sure defaults are returned
     data.clear_var_map()
+    data.variance = None  # clear the variance inputs
     assert data.variance == 2.5  # the new "pars" default
     assert data.var_scalar == 2.5
     assert data._var_scalar is None
@@ -55,7 +56,7 @@ def test_finder_data_variance():
     assert data.var_image.shape == (128, 160)
     assert data.var_image[0, 0] == 2.5  # still has image size to produce a default var map
 
-    data.im_size = None
+    data.image = None
     assert data.var_image is None  # now it should not have a var map
 
 
