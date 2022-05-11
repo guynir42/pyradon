@@ -3,3 +3,6 @@ __pycache__/
 *$py.class
 .ipynb_checkpoints/
 ARCHIVE
+venv/
+.idea/
+.github/
