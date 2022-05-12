@@ -888,7 +888,7 @@ class Finder:
             plt.clf()
             h = plt.imshow(self.data.image)
             h.set_clim(0, 5 * np.sqrt(self.data.var_scalar))
-            [streak.plotLines(im_type="full") for streak in self.streaks]
+            [streak.plot_lines(im_type="full") for streak in self.streaks]
             plt.title("full frame image")
             plt.xlabel(self.data.filename)
             f = plt.gcf()
@@ -898,7 +898,8 @@ class Finder:
 
 if __name__ == "__main__":
     f = Finder()
-    im = np.random.normal(0, 1, (512, 512))
+    f.pars.threshold = 3
+    im = np.random.normal(10, 1, (512, 512))
     # f.find_single(im)
     # f.find_multi(im)
     f.input(im)
