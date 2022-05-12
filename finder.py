@@ -32,7 +32,7 @@ class Finder:
      Helps keep track of where each streak was found.
 
     SWITCHES AND SETTINGS (see __init__() for more details)
-    -Image pre-processing: use_subtract_mean, use_conv, use_crop_image, crop_size.
+    -Image pre-processing: use_subtract_mean, use_conv.
     -Search options: use_short, min_length
     -Post processing: use_exclude, exclude_dx, exclude_dy
     -memory considerations: use_save_images, use_clear_memory.
@@ -86,13 +86,11 @@ class Finder:
         use_subtract_mean: bool = True  # subtract any residual bias
         use_conv: bool = True  # match filter with PSF
 
-        # do we want to crop the input images (e.g., to power of 2)
-        use_crop: bool = False
-        crop_size: int = 2048  # size to crop to (does not grow the array)
-
         # cut the incoming images into sections to run faster
         use_sections: bool = False
         size_sections: int = 1024  # can be a scalar or a 2-tuple
+        # can use this to trim the image before making sections
+        offset_sections: Union[int, Tuple[int, int]] = 0
 
         # search options
         use_short: bool = True  # search for short streaks
@@ -105,11 +103,13 @@ class Finder:
         exclude_x_pix: Optional[Tuple[int, int]] = (-50, 50)
         exclude_y_pix: Optional[Tuple[int, int]] = None
 
-        use_show: bool = True  # display the images
-        use_save_images: bool = True  # ...
+        use_show: bool = False  # display the images
 
-        use_write_cutouts: bool = False  # ...
-        max_length_to_write: int = 128  # ...
+        # save to disk the cutouts for any detected streaks
+        use_write_cutouts: bool = False
+        # only save cutouts for streaks shorter than this
+        # set to None for no limits
+        max_length_to_write: Optional[int] = 128
 
         # if no PSF is given, assume this as the width of a Gaussian PSF (pixels)
         default_psf_sigma: float = 1
@@ -132,7 +132,7 @@ class Finder:
         _pars = None  # must give the Pars object to allow default values of PSF and variance
 
         # images #
-        image: np.array = None  # image as given to finder
+        image: np.array = None  # image as given to finder (not altered in any way!)
         radon_image: np.array = None  # final FRT result (normalized by the var-map)
         radon_image_tr: np.array = None  # final FRT of the transposed image
 
@@ -160,12 +160,24 @@ class Finder:
         _var_image: Optional[np.array] = None
         # did we expand the input variance map
         _expanded_var: Optional[bool] = None
+        # which part of the var image did we use?
+        _var_corner: Tuple[int, int] = (0, 0)
+        # the size of the extracted section from the var image
+        _var_size: Tuple[int, int] = (0, 0)
+        # a dictionary keyed to a 6-tuple
+        # (corner, corner, size, size, transpose, expand)
+        # that keeps RadonVariance objects for each
+        # section and transposition.
+        # these are kept until a call to reset()
+        # or when calling clear_var_cache()
+        # or when the underlying variance map is changed.
+        _radon_variance_cache: dict = field(default_factory=dict)
 
         # list of partial Radon variances from either a var_scalar or var_map
         # each list item is for a different folding
-        _radon_var_map: List[np.array] = field(default_factory=list)
+        # _radon_var_map: List[np.array] = field(default_factory=list)
         # same thing, for the transposed FRT
-        _radon_var_map_tr: List[np.array] = field(default_factory=list)
+        # _radon_var_map_tr: List[np.array] = field(default_factory=list)
 
         # other things we keep track of
         # keep track of where the current section starts
@@ -173,34 +185,43 @@ class Finder:
         _num_frt_calls: int = 0
 
         @property
+        def var_uniform(self):
+            """
+            If no variance image is given,
+            the variance is a uniform map
+            with some scalar value as average.
+            """
+            return self._var_image is None
+
+        @property
         def variance(self):  # the variance value given by user (or the default value)
-            if self._var_image is not None:
-                return self._var_image
-            else:
+            if self.var_uniform:
                 return self.var_scalar
+            else:
+                return self._var_image
 
         @variance.setter
-        def variance(self, val: Union[float, np.array]):
+        def variance(self, val: Union[None, float, np.array]):
             # if working with scalar variance, only need to rescale the var maps
             if val is None:  # to clear the variance, set it to None
                 self._var_scalar = None
                 self._var_image = None
+                self.clear_radon_var_cache()
                 return
 
-            if scalar(val) and self._var_scalar is not None:
-                if self._radon_var_map:  # list of length > 0
-                    self._radon_var_map = [
-                        im * val / self._var_scalar for im in self._radon_var_map
-                    ]
-                if self._radon_var_map_tr:  # list of length > 0
-                    self._radon_var_map_tr = [
-                        im * val / self._var_scalar for im in self._radon_var_map_tr
-                    ]
+            if not np.isscalar(val) and not isinstance(val, np.array):
+                raise TypeError(
+                    "Input to variance must be a scalar or np.array. "
+                    f"Got {type(val)} instead. "
+                )
 
+            if np.isscalar(val) and self.is_var_cache_uniform():
+                for v in self._radon_variance_cache.values():
+                    v.rescale(val)
             else:  # new or old variance is not scalar, must recalculate var maps
-                self.clear_var_map()
+                self.clear_radon_var_cache()
 
-            if scalar(val):
+            if np.isscalar(val):
                 self._var_scalar = val
                 self._var_image = None
             else:
@@ -214,14 +235,86 @@ class Finder:
             else:
                 return self._pars.default_var_scalar
 
-        @property
-        def var_image(self):
-            if self._var_image is not None:
-                return self._var_image
-            elif self.image is not None:
-                return self.var_scalar * np.ones(self.image.shape)
-            else:  # cannot make a map without an image size
-                return None
+        def get_var_image(self, corner, size):
+            if self.var_uniform:
+                return self.var_scalar * np.ones(size)
+            else:  # in this case, there MUST BE a _var_image
+                return self._var_image[
+                    corner[0] : corner[0] + size[0], corner[1] : corner[1] + size[1]
+                ]
+
+        def is_var_cache_uniform(self):
+            """
+            Assume that all items in this dictionary have the same
+            value for the "uniform" field.
+            If the cache is empty, can assume it is also uniform
+            """
+            return (
+                not self._radon_variance_cache
+                or next(iter(self._radon_variance_cache.values())).uniform
+            )
+
+        def get_radon_variance(self, sec_corner, sec_size, transpose, expand):
+            """
+            Get a Radon variance map of the section
+            of the variance image given by the section
+            corner and size, and whether that section was
+            transposed and/or expanded.
+            If such a list of radon maps exist, return it.
+            If not, produce it and cache it for later use.
+
+            Parameters
+            ----------
+            sec_corner: 2-tuple of int
+                The indices of the lower left corner of the section
+                that is now being processed.
+                When not sectioning or trimming, this would be (0,0)
+            sec_size: 2-tuple of int
+                The size of the section of the image that is now
+                being processed. If not sectioning this would just
+                be equal to the size of the input image.
+            transpose: scalar boolean
+                Choose whether or not the image now being processed
+                has been transposed or not.
+            expand: scalar boolean
+                Choose whether or not the image now being processed
+                has been expanded by the FRT funtion or not.
+
+            Returns
+            -------
+                A list of partial Radon transforms of the variance
+                map (for the correct part of it, if sectioning)
+                and with the proper transpose and expansion.
+                This list should be used to normalize the
+                partial Radon transforms from the FRT
+                to get the S/N for any streaks.
+            """
+
+            # if the variance is made from a scalar,
+            # and it is therefore uniform,
+            # then there is no point in specifying the
+            if self.var_uniform:
+                sec_corner = (0, 0)
+                if not self.is_var_cache_uniform():
+                    self.clear_radon_var_cache()  # just to make sure cache is not non-uniform
+
+            # this is the value we are keying on
+            id_tuple = (*sec_corner, *sec_size, bool(transpose), bool(expand))
+
+            # lazy calculate the radon maps for this combination
+            if id_tuple not in self._radon_variance_cache:
+                self._radon_variance_cache[id_tuple] = Finder.RadonVariance(
+                    self.variance,
+                    transpose,
+                    expand,
+                    sec_corner,
+                    sec_size,
+                )
+
+            return self._radon_variance_cache[id_tuple].radon_var_list
+
+        def clear_radon_var_cache(self):
+            self._radon_variance_cache = {}
 
         @property
         def psf(self):
@@ -254,17 +347,127 @@ class Finder:
             else:
                 return self._pars.default_psf_sigma
 
-        def clear_var_map(self):  # when we switch to a new image frame
-            # self._var_scalar = None  # either given as scalar or the median of the var map
-            # self._var_image = None  # either given as map or just expanded from the scalar
-            self._expanded_var = None  # did we expand the input variance map
-            # list of partial Radon variances from either a var_scalar or var_map
-            self._radon_var_map = []
-            self._radon_var_map_tr = []  # same thing, for transposed FRT
-
         def clear_psf(self):
             self._psf_scalar = None
             self._psf_image = gaussian2D(self.psf_sigma, norm=2)
+
+    class RadonVariance:
+        """
+        Keep track of the Radon transformed variance maps.
+        Each instance of this class refers to one part of
+        the input variance map (a section) or the whole map.
+        It contains a list of partial transforms of the map,
+        to be used against real images and their partial Radon
+        transforms, to calculate the S/N.
+
+        If the object is created from a uniform map
+        (i.e., all the values are the same as the mean value)
+        then it can also be rescaled without recalculating anything,
+        in case the average variance has been changed.
+        """
+
+        def __init__(
+            self, variance, transpose=False, expand=False, corner=(0, 0), im_size=None
+        ):
+            """
+            Generate a cached Radon variance map to be
+            used for calculating S/N of Radon images
+            with potential streaks in them.
+
+            Parameters
+            ----------
+            variance: scalar float or np.array
+                The input variance. Can be a scalar or a 2D array.
+                If scalar, will generate a uniform variance map
+                and transform that. In such cases the object
+                can be rescaled easily.
+                If given a 2D array (image) it will
+                just transform a section of that and use it whenever
+                that section is queried for a variance map.
+
+            transpose: scalar boolean
+                Choose if the input should be transposed
+                before the transform is applied.
+            expand: scalar boolean
+                Choose if the input should be expanded
+                before the transform is applied.
+            corner: 2-tuple of int
+                The bottom left corner of the subsection
+                from the given variance that should be used
+                to produce the Radon maps.
+                If (0, 0), will just use the corner of the
+                input variance map. If the input variance is
+                a scalar, this has no effect.
+            im_size: 2-tuple of int
+                The size of the image that should be taken out
+                of the original variance map, or in case of a
+                scalar input variance, the size of the uniform
+                variance map that should be then transformed
+                to create the Radon variance maps.
+                If None, will just use the top-right edge
+                of the input variance image.
+                If the variance is given as a scalar,
+                the im_size cannot be None.
+
+            """
+
+            if np.isscalar(variance):
+                self.uniform = True
+                if im_size is None:
+                    raise ValueError("Must supply an im_size if variance is a scalar.")
+                self.var_map = np.ones(im_size) * variance
+                self.var_scalar = variance
+            elif isinstance(variance, np.array):
+                if np.ndim(variance) != 2:
+                    raise ValueError(
+                        "variance must be a 2D array. "
+                        f"Got a {np.ndim(variance)}D array."
+                    )
+                self.uniform = False
+
+                if im_size is None:
+                    upper_corner = variance.shape
+                else:
+                    upper_corner = (im_size[0] + corner[0], im_size[1] + corner[1])
+
+                self.var_map = variance[
+                    corner[0] : upper_corner[0], corner[1] : upper_corner[1]
+                ]
+                self.var_scalar = np.nanmedian(self.var_map)
+
+            else:
+                raise TypeError(
+                    "Input to variance parameter must be"
+                    "either a scalar or an array. "
+                    f"Instead got a {type(variance)}"
+                )
+
+            if transpose:
+                self.var_map = self.var_map.T
+
+            self.transposed = transpose
+
+            self.radon_var_list = FRT(
+                self.var_map,
+                partial=True,
+                expand=expand,
+                transpose=transpose,
+            )
+
+            self.expanded = expand
+
+        def rescale(self, new_var_scalar):
+            if not self.uniform:
+                raise RuntimeError("Cannot rescale a non-uniform RadonVariance object.")
+
+            factor = new_var_scalar / self.var_scalar
+
+            self.var_map *= factor
+
+            for i, v in enumerate(self.radon_var_list):
+                self.radon_var_list[i] = v * factor
+
+            self.var_scalar = new_var_scalar
 
     def __init__(self, **kwargs):
 
@@ -276,9 +479,8 @@ class Finder:
         self.data._pars = self.pars
 
         # objects or lists of objects
-        self.streaks: List[Streak] = field(
-            default_factory=list
-        )  # streaks saved from latest call to input()
+        # streaks saved from latest call to input()
+        self.streaks: List[Streak] = field(default_factory=list)
 
         # a list of Streak objects that passed the threshold,
         # saved from all scans (use reset() to remove these)
@@ -299,7 +501,7 @@ class Finder:
         self.data.total_runtime = 0
         self.streaks_all = []
 
-        self.data.clear_var_map()
+        self.data.clear_radon_var_cache()
         self.data.clear_psf()
 
         self.clear()
@@ -323,7 +525,7 @@ class Finder:
         self.data._num_frt_calls = 0
 
     # getters #
-    def get_radon_variance(self, transpose=False):
+    def get_radon_variance_old(self, transpose=False):
         """
         Get the partial Radon transforms of the background noise for some transpose.
         Lazy Reloading: only delete old var-maps if input size changed
@@ -340,9 +542,8 @@ class Finder:
         ):
             if self.pars.verbosity > 1:
                 print("Clearing the Radon var-maps")
-            self.data._radon_var_map = (
-                []
-            )  # clear this to be lazy loaded with the right size
+            # clear these, to be lazy loaded with the right size
+            self.data._radon_var_map = []
             self.data._radon_var_map_tr = []
 
         # if there is no var map, we need to lazy load it
@@ -490,23 +691,28 @@ class Finder:
         (this number is set to zero in self.clear()).
 
         """
-        if im is None or len(im) == 0:
+        if im is None or len(im) == 0:  # why do we need this short-circuit?
             return None
 
         if threshold is None:
             threshold = self.pars.threshold  # use default
 
         streak = None
-        self.data.image = im
+        # self.data.image = im
         self.data._num_frt_calls += 1
+
+        radon_variance_maps = self.data.get_radon_variance(
+            self.data._current_section_corner,
+            im.shape,
+            transpose,
+            self.pars.use_expand,
+        )
 
         if self.pars.use_short:
             # these are raw Radon partial transforms:
             radon_partial = FRT(im, transpose=transpose, partial=True, expand=False)
 
             # divide by the variance map, geometric factor, and PSF norm for each level
-            radon_variance_maps = self.get_radon_variance(transpose)
-
             # m counts the number of foldings, partials start at 2
             geometric_factors = [
                 self.get_geometric_factor(m) for m in range(2, len(radon_partial) + 2)
@@ -514,9 +720,8 @@ class Finder:
 
             psf_factor = self.get_norm_factor_psf()
 
-            for i in range(
-                len(radon_partial)
-            ):  # correct the radon images for all these factors
+            # correct the radon images for all these factors
+            for i in range(len(radon_partial)):
                 radon_partial[i] /= np.sqrt(
                     radon_variance_maps[i] * geometric_factors[i] * psf_factor
                 )
@@ -553,12 +758,11 @@ class Finder:
 
             radon_image = FRT(im, transpose=transpose, partial=False, expand=True)
 
-            radon_variance = self.get_radon_variance(transpose)
             # the length tells you how many foldings we need
-            foldings = len(radon_variance) + 1
+            foldings = len(radon_variance_maps) + 1
 
             # get the last folding and flatten it to 2D
-            radon_variance = radon_variance[-1][:, 0, :]
+            radon_variance = radon_variance_maps[-1][:, 0, :]
             geom_factor = self.get_geometric_factor(foldings)
             psf_factor = self.get_norm_factor_psf
 
@@ -708,7 +912,8 @@ class Finder:
         if min_threshold is None:
             min_threshold = self.pars.threshold
 
-        mx = np.nanmax(im / np.sqrt(self.data.var_image))
+        var_image = self.data.get_var_image(self.data._current_section_corner, im.shape)
+        mx = np.nanmax(im / np.sqrt(var_image))
 
         dynamic_range = np.log2(mx / min_threshold)
 
@@ -722,14 +927,10 @@ class Finder:
         for t in thresholds:
             mask = np.zeros(im.shape, dtype=bool)
             np.greater(
-                im / np.sqrt(self.data.var_image),
-                t / 2,
-                where=np.isnan(im) == 0,
-                out=mask,
+                im / np.sqrt(var_image), t / 2, where=np.isnan(im) == 0, out=mask
             )
-            im[mask] = (
-                t / 2 * np.sqrt(self.data.var_scalar)
-            )  # clip to threshold (scaled by noise)
+            # clip to threshold (scaled by noise):
+            im[mask] = t / 2 * np.sqrt(self.data.var_scalar)
             if self.pars.use_subtract_mean:
                 im -= np.nanmean(im)
 
@@ -846,18 +1047,15 @@ class Finder:
 
         self.clear()  # get rid of intermediate results
 
-        # use this to trim edge rows, or to fit into a power of 2
-        if self.pars.use_crop:
-            image = crop2size(image, self.pars.crop_size)
-
         self.data.image = image
 
         # input the variance, if given!
         if variance:
-            if not scalar(variance) and self.pars.use_crop:
-                self.data.variance = crop2size(variance, self.pars.crop_size)
-            else:
-                self.data.variance = variance
+            self.data.variance = variance
+            # if not np.isscalar(variance) and self.pars.use_crop:
+            #     self.data.variance = crop2size(variance, self.pars.crop_size)
+            # else:
+            #     self.data.variance = variance
 
         # input the PSF if given!
         if psf:
@@ -871,18 +1069,29 @@ class Finder:
         corners = []  # this can be modified by jigsaw()
 
         if self.pars.use_sections:
-            sections = jigsaw(image, self.pars.size_sections, output_corners=corners)
+            sections = jigsaw(
+                image,
+                self.pars.size_sections,
+                self.pars.offset_sections,
+                output_corners=corners,
+            )
         else:
-            sections = image[np.newaxis, ...]  # just give it one more dimension
+            sections = np.expand_dims(np.copy(image), 0)
 
         for i in range(sections.shape[0]):
 
             if corners:
                 self.data._current_section_corner = corners[i]
+            else:
+                self.data._current_section_corner = (0, 0)
 
             sec = sections[i, :, :]
             sec = self.preprocess(sec)
             self.scan_thresholds(sec)
+
+        # must return this to zero in case future users
+        # of this object want to use unsectioned images
+        self.data._current_section_corner = (0, 0)
 
         if self.pars.use_show:
             plt.clf()
@@ -899,7 +1108,8 @@ class Finder:
 if __name__ == "__main__":
     f = Finder()
     f.pars.threshold = 3
-    im = np.random.normal(10, 1, (512, 512))
+    f.pars.use_show = True
+    im = np.random.normal(0, 1, (512, 512))
     # f.find_single(im)
     # f.find_multi(im)
     f.input(im)

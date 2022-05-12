@@ -463,7 +463,7 @@ class Streak:
         if ax is None:
             ax = plt.gca()
 
-        ax.imshow(self.image_section_proc)
+        ax.imshow(self.image_section_raw)
         self.plot_lines(ax)
 
     def plot_lines(
