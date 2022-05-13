@@ -325,7 +325,7 @@ class Finder:
                     self._psf_image = gaussian2D(val, norm=2)
                     self._psf_scalar = val
             elif isinstance(val, np.ndarray) and val.ndim == 2:
-                if not np.ndarray(self._psf_image, val):
+                if not np.array_equal(self._psf_image, val):
                     val /= np.sqrt(np.sum(val**2))
                     if not np.array_equal(self._psf_image, val):
                         self._psf_image = val
