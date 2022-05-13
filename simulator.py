@@ -100,8 +100,8 @@ class Simulator:
 
     def is_vertical(self):
 
-        val1 = self.th >= 45 and self.th <= 135
-        val2 = self.th >= -135 and self.th <= -45
+        val1 = 45 <= self.th <= 135
+        val2 = -135 <= self.th <= -45
 
         return val1 or val2
 
@@ -185,10 +185,12 @@ class Simulator:
                 input_xy = (self.x1, self.x2, self.y1, self.y2)
                 input_xy = tuple(int(round(x * self.im_size)) for x in input_xy)
                 print(
-                    f"INPUT: x1= {self.x1:>4d} | x2= {self.x2:>4d} | y1= {self.y1:>4d} | y2= {self.y2:>4d}"
+                    f"INPUT: x1= {self.x1:>4d} | x2= {self.x2:>4d} | "
+                    f"y1= {self.y1:>4d} | y2= {self.y2:>4d}"
                 )
                 print(
-                    f"FOUND: x1= {s.x1:>4d} | x2= {s.x2:>4d} | y1= {s.y1:>4d} | y2= {s.y2:>4d}"
+                    f"FOUND: x1= {s.x1:>4d} | x2= {s.x2:>4d} | "
+                    f"y1= {s.y1:>4d} | y2= {s.y2:>4d}"
                 )
 
 
