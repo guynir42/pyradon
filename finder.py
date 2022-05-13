@@ -89,7 +89,10 @@ class Finder:
         use_sections: bool = False
         size_sections: int = 1024  # can be a scalar or a 2-tuple
         # can use this to trim the image before making sections
-        offset_sections: Union[int, Tuple[int, int]] = 0
+        offset_sections: Optional[Union[int, Tuple[int, int]]] = None
+        # if True, will pad parts of sections outside image
+        # if False, will trim image parts that don't fit into sections
+        pad_sections: bool = False
 
         # search options
         use_short: bool = True  # search for short streaks
@@ -447,6 +450,9 @@ class Finder:
                 transpose=transpose,
             )
 
+            for i, r in enumerate(self.radon_var_list):
+                r[r == 0] = np.nan
+
             self.expanded = expand
 
         def rescale(self, new_var_scalar):
@@ -691,7 +697,6 @@ class Finder:
             threshold = self.pars.threshold  # use default
 
         streak = None
-        # self.data.image = im
         self.data._num_frt_calls += 1
 
         radon_variance_maps = self.data.get_radon_variance(
@@ -974,22 +979,7 @@ class Finder:
 
         return im_conv
 
-    # def scan_sections(self):  # to be depricated!
-    #     """
-    #
-    #     """
-    #     corners = []
-    #     sections = jigsaw(self.image, self.size_sections, output_corners=corners)
-    #
-    #     for i in range(sections.shape[0]):
-    #         this_section = self.preprocess(sections[i])
-    #         self.current_section_corner = corners[i]
-    #         # treat the var map for each section right here!
-    #
-    #         self.scanThresholds(this_section)
-
-    # User interface #
-
+    # User interface
     def input(
         self,
         image,
@@ -1059,24 +1049,26 @@ class Finder:
 
         if self.pars.use_sections:
             sections = jigsaw(
-                image,
-                self.pars.size_sections,
-                self.pars.offset_sections,
+                im=image,
+                cut_size=self.pars.size_sections,
+                trim_corner=self.pars.offset_sections,
+                pad_value=np.nan if self.pars.pad_sections else None,
                 output_corners=corners,
             )
         else:
             sections = np.expand_dims(np.copy(image), 0)
 
+        # go over each section (could be just one) and find streaks
         for i in range(sections.shape[0]):
-
+            print(f"Processing image with corner at {corners[i]}.")
             if corners:
                 self.data._current_section_corner = corners[i]
             else:
                 self.data._current_section_corner = (0, 0)
 
-            sec = sections[i, :, :]
-            sec = self.preprocess(sec)
-            self.scan_thresholds(sec)
+            sub_image = sections[i, :, :]
+            sub_image = self.preprocess(sub_image)
+            self.scan_thresholds(sub_image)
 
         # must return this to zero in case future users
         # of this object want to use unsectioned images
@@ -1282,10 +1274,10 @@ def jigsaw(im, cut_size, trim_corner=None, pad_value=None, output_corners=None):
 
     if pad_value is None:  # get rid of any coordinates outside the image
         for i, coords in enumerate(x):
-            if coords[0] < 0 or coords[1] >= S[1]:
+            if coords[0] < 0 or coords[1] > S[1]:
                 del x[i]
         for i, coords in enumerate(y):
-            if coords[0] < 0 or coords[1] >= S[0]:
+            if coords[0] < 0 or coords[1] > S[0]:
                 del y[i]
 
         num_cut = len(x) * len(y)  # number of cutouts after culling
@@ -1297,8 +1289,6 @@ def jigsaw(im, cut_size, trim_corner=None, pad_value=None, output_corners=None):
         im_out = np.zeros((num_cut, C[0], C[1]), dtype=im.dtype)
     else:  # generate a scalar value padded output
         im_out = np.ones((num_cut, C[0], C[1]), dtype=im.dtype) * pad_value
-
-    num_cut = len(x) * len(y)  # number of cutouts
 
     counter = 0
     for cy in y:
@@ -1327,4 +1317,8 @@ if __name__ == "__main__":
     im = np.random.normal(0, 1, (512, 512))
     # f.find_single(im)
     # f.find_multi(im)
+    f.pars.use_sections = True
+    f.pars.size_sections = 500
+    f.pars.offset_sections = 10
+    f.pars.pad_sections = False
     f.input(im)
