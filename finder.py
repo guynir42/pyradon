@@ -132,9 +132,9 @@ class Finder:
         _pars = None  # must give the Pars object to allow default values of PSF and variance
 
         # images #
-        image: np.array = None  # image as given to finder (not altered in any way!)
-        radon_image: np.array = None  # final FRT result (normalized by the var-map)
-        radon_image_tr: np.array = None  # final FRT of the transposed image
+        image: np.ndarray = None  # image as given to finder (not altered in any way!)
+        radon_image: np.ndarray = None  # final FRT result (normalized by the var-map)
+        radon_image_tr: np.ndarray = None  # final FRT of the transposed image
 
         # S/N values found in the images
         # list of all S/N values found in this run (use "reset()" to clear them)
@@ -149,7 +149,7 @@ class Finder:
 
         # PSF width and image #
         # the map of the PSF, either as given or generated as a Gaussian from "sigma_psf"
-        _psf_image: Optional[np.array] = None
+        _psf_image: Optional[np.ndarray] = None
         # the width of a Gaussian PSF, either given as scalar or fit to PSF map
         _psf_scalar: Optional[float] = None
 
@@ -157,7 +157,7 @@ class Finder:
         # either given as scalar or the median of the var map
         _var_scalar: Optional[float] = None
         # either given as map or just expanded from the scalar
-        _var_image: Optional[np.array] = None
+        _var_image: Optional[np.ndarray] = None
         # did we expand the input variance map
         _expanded_var: Optional[bool] = None
         # which part of the var image did we use?
@@ -172,12 +172,6 @@ class Finder:
         # or when calling clear_var_cache()
         # or when the underlying variance map is changed.
         _radon_variance_cache: dict = field(default_factory=dict)
-
-        # list of partial Radon variances from either a var_scalar or var_map
-        # each list item is for a different folding
-        # _radon_var_map: List[np.array] = field(default_factory=list)
-        # same thing, for the transposed FRT
-        # _radon_var_map_tr: List[np.array] = field(default_factory=list)
 
         # other things we keep track of
         # keep track of where the current section starts
@@ -201,7 +195,7 @@ class Finder:
                 return self._var_image
 
         @variance.setter
-        def variance(self, val: Union[None, float, np.array]):
+        def variance(self, val: Union[None, float, np.ndarray]):
             # if working with scalar variance, only need to rescale the var maps
             if val is None:  # to clear the variance, set it to None
                 self._var_scalar = None
@@ -209,9 +203,9 @@ class Finder:
                 self.clear_radon_var_cache()
                 return
 
-            if not np.isscalar(val) and not isinstance(val, np.array):
+            if not np.isscalar(val) and not isinstance(val, np.ndarray):
                 raise TypeError(
-                    "Input to variance must be a scalar or np.array. "
+                    "Input to variance must be a scalar or np.ndarray. "
                     f"Got {type(val)} instead. "
                 )
 
@@ -323,13 +317,13 @@ class Finder:
             return self._psf_image
 
         @psf.setter
-        def psf(self, val: Union[float, np.array]):
+        def psf(self, val: Union[float, np.ndarray]):
             if scalar(val):
                 if val != self._psf_scalar:
                     self._psf_image = gaussian2D(val, norm=2)
                     self._psf_scalar = val
             elif isinstance(val, np.ndarray) and val.ndim == 2:
-                if not np.array_equal(self._psf_image, val):
+                if not np.ndarray(self._psf_image, val):
                     val /= np.sqrt(np.sum(val**2))
                     if not np.array_equal(self._psf_image, val):
                         self._psf_image = val
@@ -376,7 +370,7 @@ class Finder:
 
             Parameters
             ----------
-            variance: scalar float or np.array
+            variance: scalar float or np.ndarray
                 The input variance. Can be a scalar or a 2D array.
                 If scalar, will generate a uniform variance map
                 and transform that. In such cases the object
@@ -417,7 +411,7 @@ class Finder:
                     raise ValueError("Must supply an im_size if variance is a scalar.")
                 self.var_map = np.ones(im_size) * variance
                 self.var_scalar = variance
-            elif isinstance(variance, np.array):
+            elif isinstance(variance, np.ndarray):
                 if np.ndim(variance) != 2:
                     raise ValueError(
                         "variance must be a 2D array. "
@@ -622,11 +616,11 @@ class Finder:
             to allow detection of this streak.
             There are 2**(foldings-1) lines of the original
             image in each sub-image with this many foldings.
-        subframe: np.array of floats
+        subframe: np.ndarray of floats
             Partially transformed image where Streak was found.
             For long streaks this is the same as the final
             Radon image.
-        section: np.array of floats
+        section: np.ndarray of floats
             ?
 
         Returns
@@ -654,7 +648,7 @@ class Finder:
 
         Parameters
         ----------
-        im: 2D np.array of floats (or None)
+        im: 2D np.ndarray of floats (or None)
             The image to be scanned for streaks.
             Should be 2D, with stars and background
             fully subtracted.
@@ -831,7 +825,7 @@ class Finder:
 
         Parameters
         ----------
-        im: np.array of floats
+        im: np.ndarray of floats
             An image (or subset of images) to be scanned
             for streaks. The image will be modified
             by removing streaks and adjusting the mean
@@ -891,7 +885,7 @@ class Finder:
 
         Parameters
         ----------
-        im: np.array of floats
+        im: np.ndarray of floats
             An image (or subset of images) to be scanned
             for streaks. The image will be modified
             by removing streaks and adjusting the mean
@@ -961,13 +955,13 @@ class Finder:
 
         Parameters
         ----------
-        im: np.array of floats
+        im: np.ndarray of floats
             The image to be processed before sending it to
             the streak detection algorithm.
 
         Returns
         -------
-        Another np.array of the same size as "im",
+        Another np.ndarray of the same size as "im",
         after background subtraction and PSF filtering.
 
         """
@@ -1017,9 +1011,9 @@ class Finder:
 
         Parameters
         ----------
-        image: np.array
+        image: np.ndarray
             The image to be processed.
-        variance: scalar float or 2D np.array of floats
+        variance: scalar float or 2D np.ndarray of floats
             An estimate of the noise variance, including
             noise from the background and const sources.
             Can be a scalar representing the average noise,
@@ -1027,9 +1021,9 @@ class Finder:
             If not given, will use the existing variance map
             (i.e., it can be given once for a series of different
             images) or use the default in self.pars.default_var_scalar.
-        psf: scalar float or 2D np.array of floats
+        psf: scalar float or 2D np.ndarray of floats
             The Point Spread Function of the image (or images).
-            Can give either a scalar (gaussian sigma) or a 2D np.array.
+            Can give either a scalar (gaussian sigma) or a 2D np.ndarray.
             The array is usually smaller than the input image.
         filename: string
             Used for tracking the origin of any discovered streaks.
