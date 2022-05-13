@@ -193,6 +193,14 @@ class Simulator:
                     f"y1= {s.y1:>4d} | y2= {s.y2:>4d}"
                 )
 
+    def randomly(self):
+        x = np.random.rand(2)
+        y = np.random.rand(2)
+        self.x1 = min(x)
+        self.x2 = max(x)
+        self.y1 = min(y)
+        self.y2 = max(y)
+
 
 # test (reload object)
 if __name__ == "__main__":
@@ -203,15 +211,16 @@ if __name__ == "__main__":
     s = Simulator()
     s.verbosity = 1
 
-    s.x1 = 3.0 / 8
-    s.x2 = 0.5
-    s.y1 = 1 / 3
-    s.y2 = 1.0 / 2
+    # s.x1 = 3.0 / 8
+    # s.x2 = 0.5
+    # s.y1 = 1 / 3
+    # s.y2 = 1.0 / 2
 
     # s.x1 = 0.2
     # s.y1 = 0.01
     # s.x2 = 1
     # s.y2 = 1.5
+    s.randomly()
 
     s.finder.use_subtract_mean = False
     s.run()
