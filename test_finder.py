@@ -51,6 +51,10 @@ def test_finder_data_variance():
     assert data.get_var_image((0, 0), (512, 512))[0, 0] == 2.5
 
 
+def test_finder_data_radon_var_maps():
+    pass  # TODO: continue this!
+
+
 def test_finder_data_psf():
     pars = finder.Finder.Pars()
     data = finder.Finder.Data()

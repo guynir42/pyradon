@@ -9,9 +9,8 @@ from typing import List, Tuple, Optional, Union
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from streak import Streak
+from streak import Streak, upsample
 from frt import FRT
-from utils import scalar, crop2size, gaussian2D, gaussian_width, jigsaw
 
 
 class Finder:
@@ -318,7 +317,7 @@ class Finder:
 
         @psf.setter
         def psf(self, val: Union[float, np.ndarray]):
-            if scalar(val):
+            if np.isscalar(val):
                 if val != self._psf_scalar:
                     self._psf_image = gaussian2D(val, norm=2)
                     self._psf_scalar = val
@@ -1046,10 +1045,6 @@ class Finder:
         # input the variance, if given!
         if variance:
             self.data.variance = variance
-            # if not np.isscalar(variance) and self.pars.use_crop:
-            #     self.data.variance = crop2size(variance, self.pars.crop_size)
-            # else:
-            #     self.data.variance = variance
 
         # input the PSF if given!
         if psf:
@@ -1097,6 +1092,232 @@ class Finder:
             f = plt.gcf()
             f.canvas.draw()
             f.canvas.flush_events()
+
+
+def gaussian2D(
+    sigma_x=2.0,
+    sigma_y=None,
+    rotation_degrees=0,
+    offset_x=0,
+    offset_y=0,
+    size=None,
+    norm=1,
+):
+    """
+    Generate an image of a gaussian distrubtion.
+
+    Parameters
+    ----------
+    sigma_x: scalar float
+        The width parameter of the gaussian.
+        If sigma_y is not given, the shape is
+        circularly symmetric (i.e., sigma_y=sigma_x)
+        If both sigma_x and sigma_y are given,
+        then this parameter controls the x-axis.
+
+    sigma_y: scalar float
+        The width parameter for the y axis.
+        If not given (or None) will just be
+        equal to the sigma_x parameter.
+
+    rotation_degrees: scalar float
+        The rotation angle to be applied to the
+        x and y axes of the gaussian.
+
+    offset_x: scalar float
+        The number of pixels of offset to the gaussian center
+        in the x direction (after it had been rotated).
+
+    offset_y: scalar float
+        The number of pixels of offset to the gaussian center
+        in the y direction (after it had been rotated).
+
+    size: scalar int or 2-tuple of int
+        Shape of the image to be generated.
+        If None (default) will use 20 times the
+        longer axis sigma parameter.
+
+    norm: scalar int
+        The power of the values to use as normalization.
+        A few options exists:
+        0: no normalization at all, the peak is equal to 1.
+        1: the sum of the gaussian is equal to 1.
+        2: the sqrt of the sum of squares is equal to 1.
+
+    Returns
+    -------
+        A two-dimensional array (image) of a gaussian.
+    """
+    if sigma_y is None:
+        sigma_y = sigma_x
+
+    if size is None:
+        size = max(sigma_x, sigma_y) * 20
+
+    if np.isscalar(size):
+        size = (size, size)
+
+    size = (round(size[0]), round(size[1]))
+
+    (y0, x0) = np.indices(size, dtype="float32")
+
+    x0 -= size[1] / 2
+    y0 -= size[0] / 2
+
+    rotation_radians = np.radians(rotation_degrees)
+
+    x = x0 * np.cos(rotation_radians) + y0 * np.sin(rotation_radians) - offset_x
+    y = -x0 * np.sin(rotation_radians) + y0 * np.cos(rotation_radians) - offset_y
+
+    output_gaussian = np.exp(-0.5 * ((x / sigma_x) ** 2 + (y / sigma_y) ** 2))
+    if norm == 1:
+        output_gaussian /= np.sum(output_gaussian)
+    elif norm == 2:
+        output_gaussian /= np.sqrt(np.sum(output_gaussian**2))
+
+    return output_gaussian
+
+
+def gaussian_width(im):
+    """
+    Estimate the width of an image "im" with
+    a 2D gaussian, using the FWHM of the image
+    and calculating the gaussian sigma from that.
+    """
+
+    sizes = np.array(im.shape)
+    factor = np.round(min(300.0 / sizes))
+    if factor > 1:
+        im = upsample(im, factor)  # make sure to calculate this on an upsampled image
+
+    pix_above_half = np.sum(im > np.max(im) * 0.5)
+    fwhm = 2 * np.sqrt(pix_above_half / np.pi)  # assume circular peak
+
+    return fwhm / 2.355 / factor
+
+
+def jigsaw(im, cut_size, trim_corner=None, pad_value=None, output_corners=None):
+    """
+    Cut an image into small cutouts and return them in a 3D array.
+
+    Parameters
+    ----------
+    im: np.ndarray
+        A 2D image that needs to be cut into pieces.
+
+    cut_size: scalar int or 2-tuple of int
+        The size of the output cutouts.
+        Can be a scalar (in which case the cutouts are square)
+        or a 2-tuple so that the shape of each cutout is equal
+        to this parameter.
+
+    trim_corner: scalar int or 2 tuple of int
+        Number of rows and columns to trim from the initial
+        image before cutting it into pieces.
+        The corner specifies the bottom left pixel
+        where the cutting should begin.
+        If given as a scalar, will be copied into
+        a 2-tuple with identical values.
+        If None (default) will not trim anything,
+        i.e., equal to (0,0).
+        Note that the top right edge of the image
+        may still be trimmed if the cut_size does
+        not fit an integer number of times in the
+        image size.
+
+    pad_value: scalar float or None
+        If given a value, will use that as
+        a filler for any part of the cutouts
+        that lie outside the original image
+        (this can happen if the last pixels
+        reach out of the image or if the
+        trim_corner has negative values).
+        If None, any cutouts that have any
+        pixels outside the original image
+        will not be included in the output.
+
+    output_corners: list
+        If not None, use this list to output
+        tuples of the corners of each cutout.
+        The list is expected to be empty when
+        the function is called.
+
+    Returns
+    -------
+        A 3D array where the first dimension is the number of cutouts,
+        and the other two dimensions are the cutout height and width
+        (equal to the input cut_size).
+    """
+
+    S = im.shape  # size of the input
+    if np.isscalar(cut_size):
+        C = (cut_size, cut_size)
+    elif isinstance(cut_size, tuple) and len(cut_size) == 2:
+        C = cut_size
+    else:
+        raise TypeError("cut_size must be a scalar or 2-tuple")
+
+    if trim_corner is None:
+        T = (0, 0)
+    else:
+        if np.isscalar(trim_corner):
+            T = (trim_corner, trim_corner)
+        elif isinstance(trim_corner, tuple) and len(trim_corner) == 2:
+            T = trim_corner
+        else:
+            raise TypeError("trim_corner must be a scalar or 2-tuple")
+
+    left = np.arange(
+        T[1], S[1], C[1]
+    )  # x position of the corner of each cutout in the input image
+    right = left + C[1]
+    x = list(zip(left, right))
+    bottom = np.arange(
+        T[0], S[0], C[0]
+    )  # y position of the corner of each cutout in the input image
+    top = bottom + C[0]
+    y = list(zip(bottom, top))
+
+    num_cut = len(x) * len(y)  # number of cutouts
+
+    if pad_value is None:  # get rid of any coordinates outside the image
+        for i, coords in enumerate(x):
+            if coords[0] < 0 or coords[1] >= S[1]:
+                del x[i]
+        for i, coords in enumerate(y):
+            if coords[0] < 0 or coords[1] >= S[0]:
+                del y[i]
+
+        num_cut = len(x) * len(y)  # number of cutouts after culling
+        im_out = np.empty((num_cut, C[0], C[1]))  # make an array to hold viable cutouts
+    elif np.isnan(pad_value):  # generate a NaN padded output
+        im_out = np.empty((num_cut, C[0], C[1]), dtype=im.dtype)
+        im_out[:] = np.nan
+    elif pad_value == 0:  # generate a zero padded output
+        im_out = np.zeros((num_cut, C[0], C[1]), dtype=im.dtype)
+    else:  # generate a scalar value padded output
+        im_out = np.ones((num_cut, C[0], C[1]), dtype=im.dtype) * pad_value
+
+    num_cut = len(x) * len(y)  # number of cutouts
+
+    counter = 0
+    for cy in y:
+        for cx in x:
+            low_x = max(cx[0], 0)  # in case it is negative
+            high_x = min(cx[1], S[1])  # in case bigger than image
+            low_y = max(cy[0], 0)  # in case it is negative
+            high_y = min(cy[1], S[0])  # in case bigger than image
+
+            im_out[
+                counter, low_y - cy[0] : high_y - cy[0], low_x - cx[0] : high_x - cx[0]
+            ] = im[low_y:high_y, low_x:high_x]
+
+            if output_corners is not None:
+                output_corners.append((cy[0], cx[0]))
+
+            counter += 1
+
+    return im_out
 
 
 if __name__ == "__main__":

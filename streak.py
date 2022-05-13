@@ -3,11 +3,9 @@ import time
 import re
 import h5py
 import numpy as np
+from numpy.fft import fft2, ifft2, fftshift
 import scipy.signal
 import matplotlib.pyplot as plt
-
-# sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-# from utils import empty, imsize, model
 
 
 class Streak:
@@ -732,3 +730,18 @@ def downsample(im, factor=2, normalization="sum"):
     im_conv = scipy.signal.convolve2d(im, k, mode="same")
 
     return im_conv[factor - 1 :: factor, factor - 1 :: factor]
+
+
+def upsample(im, factor=2):
+    """
+    Use FFT interpolation (sinc interp) to up-sample
+    the given image by a factor (default 2).
+    """
+    before = [int(np.floor(s * (factor - 1) / 2)) for s in im.shape]
+    after = [int(np.ceil(s * (factor - 1) / 2)) for s in im.shape]
+
+    im_f = fftshift(fft2(fftshift(im)))
+    im_pad_f = np.pad(im_f, [(before[0], after[0]), (before[1], after[1])])
+    im_new = fftshift(ifft2(fftshift(im_pad_f)))
+
+    return im_new
