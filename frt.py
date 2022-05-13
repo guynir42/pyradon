@@ -1,198 +1,195 @@
 import numpy as np
 import math
 
-from utils import empty
 
-
-def FRT(M_in, transpose=False, expand=False, padding=True, partial=False, output=None):
-    """Fast Radon Transform (FRT) of the input matrix M_in (must be 2D numpy array)
-    Additional arguments:
-     -transpose (False): transpose M_in (replace x with y) to check all the other angles.
-     -expand (False): adds zero padding to the sides of the passive axis to allow for corner-crossing streaks
-     -padding (True): adds zero padding to the active axis to fill up powers of 2.
-     -partial (False): use this to save second output, a list of Radon partial images (useful for calculating variance at different length scales)
-     -output (None): give the a pointer to an array with the right size, for FRT to put the return value into it.
-                     Note that if partial=True then output must be a list of arrays with the right dimensions.
+def FRT(im, transpose=False, expand=False, padding=True, partial=False, output=None):
     """
-    #    print("running FRT with: transpose= "+str(transpose)+", expand= "+str(expand)+", padding= "+str(padding)+", partial= "+str(partial)+", finder= "+str(finder))
+    Fast Radon Transform (FRT) of the input matrix im
 
-    ############### CHECK INPUTS AND DEFAULTS #################################
+    Parameters
+    ----------
+    transpose: scalar boolean
+        Choose if the function should transpose im
+        (replace x with y) to check angles above 45 degrees.
+        Default is False.
+    expand: scalar boolean
+        Choose if to add zero padding to the sides
+        of the passive axis to allow for corner-crossing streaks.
+        This should not be used if searching for short streaks
+        (when using the partial results).
+        Default is False.
+    padding: scalar boolean
+        Choose if to add zero padding to the active axis to fill up powers of 2.
+        This is really important, since the algorithm expects to be able to fold
+        the data into powers of two. Default is True.
+    partial: scalar boolean
+        Choose of to output a list of partial Radon images
+        (useful for calculating variance at different length scales)
+        Default is False.
+    output: None or np.ndarray
+        Give an array with the right size,
+        for FRT to put the return value into it.
+        Note that if partial=True then output must
+        be a list of arrays with the right dimensions.
+    """
 
-    if empty(M_in):
-        return
+    # CHECK INPUTS AND DEFAULTS
+    if im.ndim > 2:
+        raise RuntimeError("FRT cannot handle more dimensions than 2D")
 
-    if M_in.ndim > 2:
-        raise Exception("FRT cannot handle more dimensions than 2D")
-
-    ############## PREPARE THE MATRIX #########################################
-
-    M = np.array(M_in)  # keep a copy of M_in to give to finalizeFRT
-
-    np.nan_to_num(M, copy=False)  # get rid of NaNs (replace with zeros)
+    # PREPARE THE MATRIX
+    im = np.nan_to_num(im, copy=True)  # get rid of NaNs (replace with zeros)
 
     if transpose:
-        M = M.T
+        im = im.T
 
     if padding:
-        M = padMatrix(M)
+        im = pad_matrix(im)
 
     if expand:
-        M = expandMatrix(M)
+        im = expand_matrix(im)
 
-    ############## PREPARE THE MATRIX #########################################
+    num_folds = get_num_log_foldings(im)
+    (num_rows, num_cols) = im.shape
 
-    Nfolds = getNumLogFoldings(M)
-    (Nrows, Ncols) = M.shape
+    im_out = []
 
-    M_out = []
-
-    if not empty(output):  # will return the entire partial transform list
+    if output is not None:  # output will have the partial transforms list
         if partial:
-            for m in range(2, Nfolds + 1):
-                if output[m - 1].shape != getPartialDims(M, m):
+            for m in range(2, num_folds + 1):
+                if output[m - 1].shape != get_partial_dims(im, m):
                     raise RuntimeError(
-                        "Wrong dimensions of output array["
-                        + str(m - 1)
-                        + "]: "
-                        + str(output[m - 1].shape)
-                        + ", should be "
-                        + str(getPartialDims(M, m))
+                        f"Wrong dimensions of output array[{m - 1}]: {output[m - 1].shape},"
+                        f" should be {getPartialDims(M, m)}"
                     )
 
-            M_out = output
+            im_out = output
 
         else:
-            if output.shape[0] != 2 * M.shape[0] - 1:
+            if output.shape[0] != 2 * im.shape[0] - 1:
                 raise RuntimeError(
-                    "Y dimension of output ("
-                    + str(output.shape[0])
-                    + ") is inconsistent with (padded and doubled) input ("
-                    + str(M.shape[0] * 2 - 1)
-                    + ")"
+                    f"Y dimension of output ({output.shape[0]})"
+                    f" is inconsistent with (padded and doubled) input ({im.shape[0] * 2 - 1})"
                 )
-            if output.shape[1] != M.shape[1]:
+            if output.shape[1] != im.shape[1]:
                 raise RuntimeError(
-                    "X dimension of output ("
-                    + str(output.shape[1])
-                    + ") is inconsistent with (expanded?) input ("
-                    + str(M.shape[1])
-                    + ")"
+                    f"X dimension of output ({output.shape[1]})"
+                    f" is inconsistent with (expanded?) input ({M.shape[1]})"
                 )
 
-    dx = np.array([0], dtype="int64")
+    dx = np.array([0])
 
-    M = M[np.newaxis, :, :]
+    im = im[np.newaxis, :, :]
 
-    for m in range(1, Nfolds + 1):  # loop over logarithmic steps
+    for m in range(1, num_folds + 1):  # loop over logarithmic steps
 
-        M_prev = M
+        im_prev = im
         dx_prev = dx
 
-        Nrows = M_prev.shape[1]
+        num_rows = im_prev.shape[1]
 
         max_dx = 2 ** (m) - 1
         dx = range(-max_dx, max_dx + 1)
-        if partial and not empty(output):
-            M = M_out[m - 1]  # we already have memory allocated for this result
+        if partial and output is not None:
+            # we already have memory allocated for this result
+            im = im_out[m - 1]
         else:
-            M = np.zeros(
-                (len(dx), Nrows // 2, Ncols), dtype=M.dtype
-            )  # make a new array each time
+            # make a new array each time
+            im = np.zeros((len(dx), num_rows // 2, num_cols), dtype=im.dtype)
 
         counter = 0
 
-        for i in range(Nrows // 2):  # loop over pairs of rows (number of rows in new M)
+        for i in range(
+            num_rows // 2
+        ):  # loop over pairs of rows (number of rows in new M)
 
             for j in range(len(dx)):  # loop over different shifts
 
                 # find the value and index of the previous shift
                 dx_in_prev = int(float(dx[j]) / 2)
                 j_in_prev = dx_in_prev + int(len(dx_prev) / 2)
-                # print "dx[%d]= %d | dx_prev[%d]= %d | dx_in_prev= %d" % (j, dx[j], j_in_prev, dx_prev[j_in_prev], dx_in_prev)
                 gap_x = dx[j] - dx_in_prev  # additional shift needed
 
-                M1 = M_prev[j_in_prev, counter, :]
-                M2 = M_prev[j_in_prev, counter + 1, :]
+                im1 = im_prev[j_in_prev, counter, :]
+                im2 = im_prev[j_in_prev, counter + 1, :]
 
-                M[j, i, :] = shift_add(M1, M2, -gap_x)
+                im[j, i, :] = shift_add(im1, im2, -gap_x)
 
             counter += 2
 
-        if partial and empty(
-            output
-        ):  # only append to the list if it hasn't been given from the start using "output"
-            M_out.append(M)
+        # only append to the list if it hasn't been given from the start using "output"
+        if partial and output is None:
+            im_out.append(im)
 
-    #     end of loop on m
+    # end of loop on m
 
-    if (
-        not partial
-    ):  # we don't care about partial transforms, we were not given an array to fill
-        #        M_out = np.transpose(M, (0,2,1))[:,:,0] # lose the empty dimension
-        M_out = M[:, 0, :]  # lose the empty dim
+    # we don't care about partial transforms, we were not given an array to fill
+    if not partial:
+        im_out = im[:, 0, :]  # lose the empty dim
 
-        if not empty(output):  # do us a favor and also copy it into the array
-            np.copyto(output, M_out)
+        if output is not None:  # do us a favor and also copy it into the array
+            np.copyto(output, im_out)
             # this can be made more efficient if we use the "output" array as
             # target for assignment at the last iteration on m.
             # this will save an allocation and a copy of the array.
             # however, this is probably not very expensive and not worth
             # the added complexity of the code
 
-    return M_out
+    return im_out
 
 
-############# end of FRT algorithm, helper functions: ########################
+# end of FRT algorithm, helper functions:
 
 
-def padMatrix(M):
-    N = M.shape[0]
-    dN = int(2 ** math.ceil(math.log(N, 2)) - N)
-    #    print "must add "+str(dN)+" lines..."
-    M = np.vstack((M, np.zeros((dN, M.shape[1]), dtype=M.dtype)))
-    return M
+def pad_matrix(im):
+    size = im.shape[0]
+    size_diff = int(2 ** math.ceil(math.log(size, 2)) - size)
+    # im = np.vstack((im, np.zeros((size_diff, im.shape[1]), dtype=im.dtype)))
+    im = np.pad(im, [(0, size_diff), (0, 0)])
+    return im
 
 
-def expandMatrix(M):
-    Z = np.zeros((M.shape[0], M.shape[0]), dtype=M.dtype)
-    M = np.hstack((Z, M, Z))
-    return M
+def expand_matrix(im):
+    # Z = np.zeros((M.shape[0], M.shape[0]), dtype=M.dtype)
+    # M = np.hstack((Z, M, Z))
+    im = np.pad(im, [(0, 0), (im.shape[0], im.shape[0])])
+    return im
 
 
-def shift_add(M1, M2, gap):
+def shift_add(im1, im2, gap):
 
-    output = np.zeros_like(M2)
+    output = np.zeros_like(im2)
 
     if gap > 0:
-        output[:gap] = M1[:gap]
-        output[gap:] = M1[gap:] + M2[:-gap]
+        output[:gap] = im1[:gap]
+        output[gap:] = im1[gap:] + im2[:-gap]
     elif gap < 0:
-        output[gap:] = M1[gap:]
-        output[:gap] = M1[:gap] + M2[-gap:]
+        output[gap:] = im1[gap:]
+        output[:gap] = im1[:gap] + im2[-gap:]
     else:
-        output = M1 + M2
+        output = im1 + im2
 
     return output
 
 
-def getPartialDims(M, log_level):
-    x = M.shape[1]
-    y = M.shape[0]
+def get_partial_dims(im, log_level):
+    x = im.shape[1]
+    y = im.shape[0]
 
     y = int(y / 2**log_level)
     z = int(2 ** (log_level + 1) - 1)
 
-    return (z, y, x)
+    return z, y, x
 
 
-def getNumLogFoldings(M):
-    return int(np.ceil(np.log2(M.shape[0])))
+def get_num_log_foldings(im):
+    return int(np.ceil(np.log2(im.shape[0])))
 
 
-def getEmptyPartialArrayList(M):
+def get_empty_partial_array_list(im):
     return [
-        np.zeros(getPartialDims(M, m), dtype=M.dtype)
-        for m in range(1, int(getNumLogFoldings(M) + 1))
+        np.zeros(get_partial_dims(im, m), dtype=im.dtype)
+        for m in range(1, int(get_num_log_foldings(im) + 1))
     ]
 
 
@@ -207,22 +204,22 @@ if __name__ == "__main__":
 
     t = time.time()
 
-    M = np.random.normal(0, 1, (2048, 2048)).astype("float32")
+    im = np.random.normal(0, 1, (2048, 2048)).astype(np.float32)
 
-    print("random image of size " + str(M.shape) + " sent to FRT")
+    print(f"random image of size {im.shape} sent to FRT")
 
-    use_partial = 1
-
-    if use_partial:
-        Rout = getEmptyPartialArrayList(M)
-    else:
-        Rout = np.zeros((M.shape[0] * 2 - 1, M.shape[1]), dtype=M.dtype)
-
-    R = FRT(M, partial=use_partial, output=Rout)
+    use_partial = True
 
     if use_partial:
-        plt.imshow(R[-1][:, 0, :])
+        output = get_empty_partial_array_list(im)
     else:
-        plt.imshow(R)
+        output = np.zeros((im.shape[0] * 2 - 1, im.shape[1]), dtype=im.dtype)
 
-    print("Elapsed time: " + str(time.time() - t))
+    radon = FRT(im, partial=use_partial, output=output)
+
+    if use_partial:
+        plt.imshow(radon[-1][:, 0, :])
+    else:
+        plt.imshow(radon)
+
+    print(f"Elapsed time: {time.time() - t:.2f}")

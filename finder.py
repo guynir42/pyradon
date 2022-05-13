@@ -1060,7 +1060,6 @@ class Finder:
 
         # go over each section (could be just one) and find streaks
         for i in range(sections.shape[0]):
-            print(f"Processing image with corner at {corners[i]}.")
             if corners:
                 self.data._current_section_corner = corners[i]
             else:
