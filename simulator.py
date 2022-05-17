@@ -165,33 +165,10 @@ class Simulator:
         if len(self.finder.streaks) == 0:
             print(f"No streaks found. Maximal S/N= {self.finder.data.best_snr}")
         else:
-            s = self.finder.streaks[0]
-
             if self.verbosity:
-                print(
-                    f"SIMULATED : S/N= {self.calc_snr():.2f} | "
-                    f"I= {self.intensity:.2f} | "
-                    f"L= {self.L*self.im_size:.1f} | "
-                    f"th= {self.th:.2f} | "
-                    f"x0= {self.x0*self.im_size:.2f}"
-                )
-                print(
-                    f"CALCULATED: S/N= {s.snr:.2f} | "
-                    f"I= {s.I:.2f} | L= {s.L:.1f} | "
-                    f"th= {s.th:.2f} | x0= {s.x0:.2f} "
-                )
-
-            if self.verbosity > 1:
-                input_xy = (self.x1, self.x2, self.y1, self.y2)
-                input_xy = tuple(int(round(x * self.im_size)) for x in input_xy)
-                print(
-                    f"INPUT: x1= {self.x1:>4d} | x2= {self.x2:>4d} | "
-                    f"y1= {self.y1:>4d} | y2= {self.y2:>4d}"
-                )
-                print(
-                    f"FOUND: x1= {s.x1:>4d} | x2= {s.x2:>4d} | "
-                    f"y1= {s.y1:>4d} | y2= {s.y2:>4d}"
-                )
+                self.print()
+                for s in self.finder.streaks:
+                    s.print()
 
     def randomly(self):
         x = np.random.rand(2)
@@ -200,6 +177,15 @@ class Simulator:
         self.x2 = max(x)
         self.y1 = min(y)
         self.y2 = max(y)
+
+    def print(self):
+        print(
+            f"SIMULATED : S/N= {self.calc_snr():.2f} | "
+            f"I= {self.intensity:.2f} | "
+            f"L= {self.L * self.im_size:.1f} | "
+            f"th= {self.th:.2f} | "
+            f"x0= {self.x0 * self.im_size:.2f}"
+        )
 
 
 # test (reload object)

@@ -529,6 +529,13 @@ class Streak:
                 [x1 - offset, x2 - offset], [y1, y2], line_format, linewidth=linewidth
             )
 
+    def print(self):
+        print(
+            f"CALCULATED: S/N= {self.snr:.2f} | "
+            f"I= {self.I:.2f} | L= {self.L:.1f} | "
+            f"th= {self.th:.2f} | x0= {self.x0:.2f} "
+        )
+
 
 def model(
     im_size, x1, x2, y1, y2, psf_sigma=2, replace_value=0, threshold=1e-10, oversample=4

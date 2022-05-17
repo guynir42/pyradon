@@ -479,11 +479,11 @@ class Finder:
 
         # objects or lists of objects
         # streaks saved from latest call to input()
-        self.streaks: List[Streak] = field(default_factory=list)
+        self.streaks: List[Streak] = []
 
         # a list of Streak objects that passed the threshold,
         # saved from all scans (use reset() to remove these)
-        self.streaks_all: List[Streak] = field(default_factory=list)
+        self.streaks_all: List[Streak] = []
 
         # keep track of the time when this object was initialized
         self._version_timestamp: float = time.time()

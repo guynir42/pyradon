@@ -1,6 +1,7 @@
 import sys
 import os
 import numpy as np
+import matplotlib.pyplot as plt
 from timeit import default_timer as timer
 import pytest
 
@@ -89,3 +90,37 @@ def test_finder_data_psf():
     assert data.psf_sigma == 2.5
     # should generate a new PSF with sigma=2.5
     assert psf_map.shape != data.psf.shape
+
+
+def test_find_single(f, sim):
+    sim.x1 = 3.0 / 8.0
+    sim.x2 = 0.5
+    sim.y1 = 0.25
+    sim.y2 = 0.50
+    sim.make_image()
+    f.data.image = sim.image
+    f.data.psf = sim.psf_sigma
+    f.data.variance = sim.bg_noise_var
+    f.find_single(f.preprocess(sim.image))
+
+    try:
+        assert f.streaks
+        assert (
+            abs(f.streaks[0].snr - sim.calc_snr()) / sim.calc_snr() < 0.1
+        )  # 10% differences
+        assert (
+            abs(f.streaks[0].I - sim.intensity) / sim.intensity < 0.1
+        )  # 10% differences
+        assert abs(f.streaks[0].th - sim.th) / sim.th < 0.1  # 10% differences
+        assert (
+            abs(f.streaks[0].x0 - sim.x0 * sim.im_size) / (sim.x0 * sim.im_size) < 0.1
+        )  # 10% differences
+        assert (
+            abs(f.streaks[0].L - sim.L * sim.im_size) / (sim.L * sim.im_size) < 0.1
+        )  # 10% differences
+    except Exception as e:
+        sim.print()
+        f.streaks[0].print()
+        f.streaks[0].show()
+        plt.show(block=True)
+        raise e

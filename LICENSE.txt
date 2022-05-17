@@ -1,5 +1,8 @@
     Image processing tools to detect streaks in astronomical images using a Fast Radon Transform
     Copyright (C) 2018 Guy Nir
+    If you use this software, please cite
+    Nir et al 2018, Astronomical Journal, vol 156, number 5,
+    (https://ui.adsabs.harvard.edu/abs/2018AJ....156..229N/abstract).
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
