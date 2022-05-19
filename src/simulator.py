@@ -1,6 +1,6 @@
 import numpy as np
-from finder import Finder
-from streak import model
+from src.finder import Finder
+from src.streak import model
 
 
 class Simulator:
