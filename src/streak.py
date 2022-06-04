@@ -418,7 +418,7 @@ class Streak:
             ds.attrs["corner"] = self.corner_cutout
             # add additional metadata later on
 
-    def subtract_streak(self, im, replace_value=np.nan):
+    def subtract_streak(self, im, replace_value=np.nan, image_type="subsection"):
         """
         Replace any pixels touched by this streak with
         a new value (default is NaN).
@@ -440,8 +440,29 @@ class Streak:
             background subtraction, no counting this pixels.
             other popular choices are zero or the b/g mean value.
 
+        image_type: str
+            The type of image to use for the streak model.
+            Can be 'subsection' or 'full' or 'cutout'.
         """
-        mask = model(im.shape, self.x1, self.x2, self.y1, self.y2, self.psf_sigma) > 0
+
+        if image_type == "subsection":
+            mask = (
+                model(im.shape, self.x1, self.x2, self.y1, self.y2, self.psf_sigma) > 0
+            )
+        elif image_type == "full":
+            mask = (
+                model(im.shape, self.x1f, self.x2f, self.y1f, self.y2f, self.psf_sigma)
+                > 0
+            )
+        elif image_type == "cutout":
+            mask = (
+                model(im.shape, self.x1c, self.x2c, self.y1c, self.y2, self.psf_sigma)
+                > 0
+            )
+        else:
+            raise ValueError(
+                f"image_type {image_type} not recognized... use 'subsection', 'full', or 'cutout'. "
+            )
 
         im[mask] = replace_value
 

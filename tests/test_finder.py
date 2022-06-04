@@ -174,7 +174,7 @@ def test_find_multi(f, sim):
         raise e
 
 
-@pytest.mark.flaky(reruns=2)
+@pytest.mark.flaky(reruns=3)
 def test_scan_thresholds(f, sim):
     intensities = [100.0, 50.0, 25.0, 10.0]
     angles = []
@@ -217,6 +217,23 @@ def test_scan_thresholds(f, sim):
         for s in f.streaks:
             s.show()
             s.print()
+        plt.show(block=True)
+        raise e
+
+    try:
+
+        f.make_image_sub()
+
+        # the image with streaks has a mean and variance that are higher than just noise
+        assert np.nanmean(f.data.image) > 0.01
+        assert abs(np.nanvar(f.data.image) - f.data.variance) > 0.1
+
+        # the subtracted image is consistent with background noise only
+        assert np.nanmean(f.data.image_sub) < 0.01
+        assert abs(np.nanvar(f.data.image_sub) - f.data.variance) < 0.1
+
+    except Exception as e:
+        plt.imshow(f.data.image_sub)
         plt.show(block=True)
         raise e
 

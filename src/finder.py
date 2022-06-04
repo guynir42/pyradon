@@ -135,6 +135,7 @@ class Finder:
 
         # images #
         image: np.ndarray = None  # image as given to finder (not altered in any way!)
+        image_sub: np.ndarray = None  # image after streaks are subtracted
         radon_image: np.ndarray = None  # final FRT result (normalized by the var-map)
         radon_image_tr: np.ndarray = None  # final FRT of the transposed image
 
@@ -946,6 +947,13 @@ class Finder:
 
         return im
 
+    def make_image_sub(self):
+        """Make a copy of the original image, with streaks subtracted."""
+        self.data.image_sub = self.data.image.copy()
+
+        for s in self.streaks:
+            s.subtract_streak(self.data.image_sub, np.nan, "full")
+
     def preprocess(self, im):
         """
         Run basic processing required before submitting the image
@@ -1065,13 +1073,15 @@ class Finder:
             else:
                 self.data._current_section_corner = (0, 0)
 
-            sub_image = sections[i, :, :]
-            sub_image = self.preprocess(sub_image)
-            self.scan_thresholds(sub_image)
+            image_sec = sections[i, :, :]
+            image_sec = self.preprocess(image_sec)
+            self.scan_thresholds(image_sec)
 
         # must return this to zero in case future users
         # of this object want to use unsectioned images
         self.data._current_section_corner = (0, 0)
+
+        self.make_image_sub()
 
         if self.pars.use_show:
             plt.clf()
