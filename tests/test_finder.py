@@ -189,13 +189,17 @@ def test_scan_thresholds(f, sim):
         else:
             im += sim.image
 
-        # TODO: add stars with simulator method
+        # add stars
+    stars = sim.add_stars(number=100, brightness=100, power_law=2.0)
+    star_mask = stars > 0.001
+    im += stars
 
     f.data.image = im
     f.data.psf = sim.psf_sigma
     f.data.variance = sim.bg_noise_var * len(intensities)
     f.scan_thresholds(f.preprocess(im))
 
+    # check that all streaks are found
     try:
 
         assert len(f.streaks) >= len(intensities)
@@ -220,20 +224,26 @@ def test_scan_thresholds(f, sim):
         plt.show(block=True)
         raise e
 
+    # check the resulting image doesn't have any streaks
     try:
 
-        f.make_image_sub()
+        im = f.data.image.copy()
+        im[star_mask] = np.nan
 
         # the image with streaks has a mean and variance that are higher than just noise
-        assert np.nanmean(f.data.image) > 0.01
-        assert abs(np.nanvar(f.data.image) - f.data.variance) > 0.1
+        assert np.nanmean(im) > 0.1
+        assert abs(np.nanvar(im) - f.data.variance) > 0.1
+
+        f.make_image_sub()
+        im = f.data.image_sub.copy()
+        im[star_mask] = np.nan
 
         # the subtracted image is consistent with background noise only
-        assert np.nanmean(f.data.image_sub) < 0.01
-        assert abs(np.nanvar(f.data.image_sub) - f.data.variance) < 0.1
+        assert abs(np.nanmean(im)) < 0.1
+        assert abs(np.nanvar(im) - f.data.variance) < 0.1
 
     except Exception as e:
-        plt.imshow(f.data.image_sub)
+        plt.imshow(im)
         plt.show(block=True)
         raise e
 
