@@ -9,6 +9,7 @@ import pytest
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from src import finder
+from src import frt
 
 
 def test_finder_data_variance():
@@ -94,7 +95,29 @@ def test_finder_data_psf():
 
 
 def test_frt_small():
-    pass
+    # use the simple example from the paper
+    # note that both arrays are flipped up-down
+    # relative to Fig 1-3 in the paper.
+    im = np.array(
+        [[0, 0, 0, 1, 0], [0, 0, 1, 0, 0], [0, 0, 1, 0, 0], [0, 1, 0, 0, 0]],
+        dtype=np.int,
+    )
+    rad_im = np.array(
+        [
+            [0, 0, 0, 2, 2],
+            [0, 0, 0, 4, 0],
+            [0, 0, 2, 2, 0],
+            [0, 1, 2, 1, 0],
+            [1, 1, 1, 1, 0],
+            [0, 2, 0, 1, 0],
+            [1, 1, 0, 1, 0],
+        ],
+        dtype=np.int,
+    )
+    result = frt.FRT(im)
+
+    # make sure the radon transform is correct
+    assert np.array_equal(result, rad_im)
 
 
 def test_find_single(f, sim):
