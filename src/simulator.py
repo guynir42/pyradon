@@ -1,5 +1,5 @@
 import numpy as np
-from src.finder import Finder
+from src.finder import Finder, gaussian2D
 from src.streak import model
 
 
@@ -28,9 +28,9 @@ class Simulator:
         self.finder = Finder()
 
         # outputs
-        self.image_clean = []
-        self.image = []
-        self.psf = []
+        self.image_clean = None
+        self.image = None
+        self.psf = None
 
         # switches
         self.im_size = 512  # assume we want to make square images
@@ -38,6 +38,11 @@ class Simulator:
         self.bg_noise_var = 1.0
         self.use_source_noise = True
         self.psf_sigma = 2.0
+
+        # adding stars
+        self.number_stars = 0
+        self.star_brightness = 100
+        self.star_power_law = 2
 
         # these parameters are in units of image size
         self.x1 = 0.0
@@ -116,10 +121,15 @@ class Simulator:
     def make_image(self):
 
         if self.verbosity > 1:
-            print("make_mage()")
+            print("make_image()")
 
         self.clear()
         self.make_clean()
+        self.image_clean += self.add_stars(
+            number=self.number_stars,
+            brightness=self.star_brightness,
+            power_law=self.star_power_law,
+        )
         self.add_noise()
 
     def make_clean(self):
@@ -146,7 +156,62 @@ class Simulator:
         else:
             var = bg
 
-        self.image = np.random.normal(self.image_clean, np.sqrt(var)).astype(np.float32)
+        self.image = np.random.poisson(var).astype(np.float32) - self.bg_noise_var
+
+    def add_stars(self, number=10, brightness=100, power_law=0):
+        """
+        Generate randomly placed stars with brightness
+        chosen from a power law (or a constant brightness).
+        The stars are placed in random locations,
+        and their shape is consistent with the psf of the image.
+        Poisson noise is added to each source.
+
+        Parameters
+        ----------
+        number: int
+            How many stars to be added. Default 10.
+        brightness: float
+            The total photon count for the brightest
+            star (or all stars, if power_law=0).
+            Default is 100.
+            If power_law is not zero, will randomly
+            choose the brightness based on the power
+            law index given.
+            Each star will have Poisson noise added
+            on top of its brightness during add_noise().
+        power_law: float
+            Index of the power law distribution of
+            brightnesses (total counts).
+            Default is zero (all stars the same).
+        Returns
+        -------
+        im: np.array of floats
+            an image with stars, without noise.
+        """
+
+        im = np.zeros((self.im_size, self.im_size), dtype=np.float32)
+        for i in range(number):
+            x = np.random.uniform(-0.5, 0.5) * self.im_size
+            y = np.random.uniform(-0.5, 0.5) * self.im_size
+            if power_law == 0:
+                b = brightness
+            else:
+                b = np.random.pareto(power_law) * brightness
+
+            g = (
+                gaussian2D(
+                    sigma_x=self.psf_sigma,
+                    size=self.im_size,
+                    offset_x=x,
+                    offset_y=y,
+                    norm=1,
+                )
+                * b
+            )
+
+            im += g
+
+        return im
 
     def find(self):
 
@@ -207,7 +272,8 @@ if __name__ == "__main__":
     # s.x2 = 1
     # s.y2 = 1.5
     s.randomly()
-
+    s.number_stars = 1000
+    s.star_brightness = 50
     s.finder.use_subtract_mean = False
     s.run()
 
