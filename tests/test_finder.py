@@ -120,6 +120,7 @@ def test_frt_small():
     assert np.array_equal(result, rad_im)
 
 
+@pytest.mark.flaky(reruns=2)
 def test_find_single(f, sim):
     sim.x1 = 3.0 / 8.0
     sim.x2 = 0.5
@@ -150,6 +151,7 @@ def test_find_single(f, sim):
         raise e
 
 
+@pytest.mark.flaky(reruns=2)
 def test_find_multi(f, sim):
     x1 = [0.2, 0.6, 0.7, 0.3]
     x2 = x1[1:] + x1[0:1]
