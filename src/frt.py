@@ -60,7 +60,7 @@ def FRT(im, transpose=False, expand=False, padding=True, partial=False, output=N
                 if output[m - 1].shape != get_partial_dims(im, m):
                     raise RuntimeError(
                         f"Wrong dimensions of output array[{m - 1}]: {output[m - 1].shape},"
-                        f" should be {getPartialDims(M, m)}"
+                        f" should be {get_partial_dims(im, m)}"
                     )
 
             im_out = output
@@ -74,7 +74,7 @@ def FRT(im, transpose=False, expand=False, padding=True, partial=False, output=N
             if output.shape[1] != im.shape[1]:
                 raise RuntimeError(
                     f"X dimension of output ({output.shape[1]})"
-                    f" is inconsistent with (expanded?) input ({M.shape[1]})"
+                    f" is inconsistent with (expanded?) input ({im.shape[1]})"
                 )
 
     dx = np.array([0])

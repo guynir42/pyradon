@@ -37,7 +37,7 @@ The three classes included in this package are:
    The simulator can make multiple streaks of different intensities and coordinates,
    and can simulate random streaks with parameters chosen uniformly in a user-defined range.
 
-### Using the Finder
+## Using the Finder
 
 To use the full power of the `Finder` object,
 use the `input()` function, giving it three parameters:
@@ -78,7 +78,7 @@ These variance Radon maps are cached by the Finder to be re-used
 with multiple images if needed,
 and are refreshed when new variance values are given.
 
-### Preprocessing input images
+## Preprocessing input images
 
 The Radon method is very sensitive to any positive bias in the image.
 Diffuse sources, such as galaxies or even ghosts or reflections
@@ -131,7 +131,7 @@ finding actual streaks (from satellites and asteroids).
 Therefore, some additional work may be needed to
 classify the different objects identified by the algorithm.
 
-### Clipping and sectioning
+## Clipping and sectioning
 
 One option of the `Finder` is to clip and section
 the input image before looking for streaks.
@@ -223,7 +223,7 @@ which would throw away almost 3/4 of the image.
 Note that even if the sections are not powers of two,
 they will be padded by the `FRT()` function.
 
-### Using parts of the finding algorithm
+## Using parts of the finding algorithm
 
 The full `Finder` algorithm requires multiple iterations
 and can be quite slow, especially if many streaks (or artefacts) are found.
@@ -271,7 +271,7 @@ in the image to properly estimate the S/N of the streaks.
 Supply the scalar variance value or a variance map of the
 same size as the image to `finder.data.variance`.
 
-# examples:
+### examples:
 
 Find the brightest streak in an image:
 
@@ -287,10 +287,15 @@ s2 = f.find_single(transpose=True)
 # choose the streak with the best S/N
 if s1 is not None and s2 is not None:
    s = s1 if s1.snr > s2.snr else s2
-else:
+elif s1 is not None or s2 is not None:
     s = s1 or s2
+else:
+    s = None
 
-s.print()  # print the streak coordinates and properties
+if s is None:
+    print('No streaks were detected!')
+else:
+    s.print()  # print the streak coordinates and properties
 ```
 
 Find up to 10 streaks in the image
@@ -335,15 +340,91 @@ with more pixels and more accumulated noise.
 To normalize this result,
 the Radon variance must be used.
 
-### Fast Radon Transform function details
+## Fast Radon Transform function details
 
-### Reading the results from Streak objects
+The Fast Radon Transform function will calculate
+the integral of different lines across the image.
+The output maps an image in x and y into an image
+in `x0` and `dx`, meaning the offset between the
+pixel where the integration starts at the bottom
+of the image and the number of pixels the endpoint
+is offset from the starting point
+(i.e., how many lateral pixels does the line traverse
+when crossing the image from bottom to top).
+This is limited to the range -45 <= `dx` <= 45 degrees,
+so that integrating lines outside that range is acheived
+by transposing the image and running another transform.
+To make the transpose, simply supply `transpose=True`
+to the `FRT` function.
+This applies the transform inside the function.
 
-### Cleaning streaks from images
+Because the FRT works by combining rows together,
+the data must be an integer power of 2.
+If using `padding=True` there will be zeros added
+to the y-axis to pad it to the nearest power of 2.
+If the image is very far from a power of 2,
+consider clipping the image down to a power of 2
+before feeding it to the `FRT` function.
+We always use `padding=True` because
+the function will fail if fed a non integer power of 2.
 
-### Using the Simulator
+Another limit of the FRT is that streaks that are
+"corner crossing" will generally fall outside the
+limit of the transform because their starting point `x0`
+is outside the image axis.
+To overcome this, the input `expand=True` will
+zero pad the x-axis of the image by the height of
+the image such that every starting point within
+a 45 degree angle in either direction is included.
 
-### NOTES
+Another way to avoid expanding the x-axis is to
+search for short streaks.
+This, of course, has many other advantages since
+many science cases are more interested in short streaks.
+Since short streaks can be detected even
+when they are corner crossing,
+there is no need to use `expand`.
+To find short streaks we use `partial=True`,
+which saves and outputs "partial Radon transforms".
+These would be lists of 3D array,
+where each array represents a different stage in the transform,
+e.g., the first array for combination of two rows,
+the next list for combinations of four rows, etc.
+By finding peaks in a specific 3D array,
+the user can figure out the length of the streak
+by knowing how many rows have been "transformed" into that array.
+For example the third array is for streaks with a length
+of 8 pixels along the y-axis
+(the actual length is determined by reading off the `dx` value as well).
+Since calculating the S/N for streaks requires
+also keeping track of partial Radon transforms
+of the variance maps and matching them with the
+partial transforms of the sky images,
+it is recommended that such use cases
+make use of the `Finder` class.
+If `partial=False` the algorithm will not
+output the partial transforms,
+but instead pick only the last 3D array,
+which has a singleton 2nd dimension,
+will remove that dimension,
+such that `dx` is now the first dimension,
+and the output will be a 2D image in `dx` and `x0`.
+
+Finally, the `output` argument can be used to give
+an existing array to the function, which will write
+into that array instead of re-allocating the output.
+This is only used for saving runtime.
+If using `partial=True`, the `output` argument
+should be a list of 3D arrays of the right shapes
+to hold the outputs.
+
+## Reading the results from Streak objects
+
+## Cleaning streaks from images
+
+## Using the Simulator
+
+## NOTES
 
 - this package is based on the MATLAB package
   (that has some additional GUI functionality but is otherwise less updated)
