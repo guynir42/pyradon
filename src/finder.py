@@ -191,7 +191,11 @@ class Finder:
             return self._var_image is None
 
         @property
-        def variance(self):  # the variance value given by user (or the default value)
+        def variance(self):
+            """
+            The variance value given by user (or the default value)
+            """
+
             if self.var_uniform:
                 return self.var_scalar
             else:
@@ -233,6 +237,21 @@ class Finder:
                 return self._pars.default_var_scalar
 
         def get_var_image(self, corner, size):
+            """
+            Get the variance map for the given section.
+
+            Parameters
+            ----------
+            corner: tuple (int, int)
+                The corner of the section to extract.
+            size: tuple (int, int)
+                The size of the section to extract.
+
+            Returns
+            -------
+            var_image: np.ndarray
+                The variance map for the given section.
+            """
             if self.var_uniform:
                 return self.var_scalar * np.ones(size)
             else:  # in this case, there MUST BE a _var_image
@@ -315,7 +334,13 @@ class Finder:
 
         @property
         def psf(self):
+            """
+            The PSF image itself, either by loading
+            the image given by the user or by generating
+            it from the psf_sigma.
+            """
             if self._psf_image is None:
+                # this will set the _psf_image using the psf setter
                 self.psf = self.psf_sigma
             return self._psf_image
 
@@ -339,6 +364,11 @@ class Finder:
 
         @property
         def psf_sigma(self):
+            """
+            The sigma of the PSF, either by loading
+            the user defined value or the default value
+            (which is usually default_psf_sigma=1).
+            """
             if self._psf_scalar is not None:
                 return self._psf_scalar
             else:
@@ -793,6 +823,8 @@ class Finder:
 
         if streak:
             self.streaks.append(streak)
+            self.streaks_all.append(streak)
+
             if self.pars.use_write_cutouts:
                 if (
                     self.pars.max_length_to_write is None
