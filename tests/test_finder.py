@@ -1,12 +1,7 @@
-import sys
-import os
 import copy
 import numpy as np
 import matplotlib.pyplot as plt
-from timeit import default_timer as timer
 import pytest
-
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from src import finder
 from src import frt
@@ -100,7 +95,7 @@ def test_frt_small():
     # relative to Fig 1-3 in the paper.
     im = np.array(
         [[0, 0, 0, 1, 0], [0, 0, 1, 0, 0], [0, 0, 1, 0, 0], [0, 1, 0, 0, 0]],
-        dtype=np.int,
+        dtype=int,
     )
     rad_im = np.array(
         [
@@ -112,7 +107,7 @@ def test_frt_small():
             [0, 2, 0, 1, 0],
             [1, 1, 0, 1, 0],
         ],
-        dtype=np.int,
+        dtype=int,
     )
     result = frt.FRT(im)
 
@@ -120,7 +115,7 @@ def test_frt_small():
     assert np.array_equal(result, rad_im)
 
 
-@pytest.mark.flaky(reruns=2)
+@pytest.mark.flaky(max_runs=2)
 def test_find_single(f, sim):
     sim.x1 = 3.0 / 8.0
     sim.x2 = 0.5
@@ -151,7 +146,7 @@ def test_find_single(f, sim):
         raise e
 
 
-@pytest.mark.flaky(reruns=2)
+@pytest.mark.flaky(max_runs=2)
 def test_find_multi(f, sim):
     x1 = [0.2, 0.6, 0.7, 0.3]
     x2 = x1[1:] + x1[0:1]
@@ -199,7 +194,7 @@ def test_find_multi(f, sim):
         raise e
 
 
-@pytest.mark.flaky(reruns=3)
+@pytest.mark.flaky(max_runs=3)
 def test_scan_thresholds(f, sim):
     intensities = [100.0, 50.0, 25.0, 10.0]
     angles = []
