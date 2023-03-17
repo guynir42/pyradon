@@ -100,7 +100,7 @@ def test_frt_small():
     # relative to Fig 1-3 in the paper.
     im = np.array(
         [[0, 0, 0, 1, 0], [0, 0, 1, 0, 0], [0, 0, 1, 0, 0], [0, 1, 0, 0, 0]],
-        dtype=np.int,
+        dtype=int,
     )
     rad_im = np.array(
         [
@@ -112,7 +112,7 @@ def test_frt_small():
             [0, 2, 0, 1, 0],
             [1, 1, 0, 1, 0],
         ],
-        dtype=np.int,
+        dtype=int,
     )
     result = frt.FRT(im)
 
