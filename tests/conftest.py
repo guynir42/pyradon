@@ -3,8 +3,8 @@ import pytest
 import numpy as np
 from timeit import default_timer as timer
 
-from src import simulator
-from src import finder
+from pyradon import simulator
+from pyradon import finder
 
 
 @pytest.fixture

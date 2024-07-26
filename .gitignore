@@ -5,3 +5,6 @@ __pycache__/
 ARCHIVE
 venv/
 .idea/
+dist
+*.egg
+*.egg-info
