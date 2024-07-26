@@ -3,8 +3,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import pytest
 
-from src import finder
-from src import frt
+from pyradon import finder
+from pyradon import frt
 
 
 def test_finder_data_variance():

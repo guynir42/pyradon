@@ -1,6 +1,6 @@
 import numpy as np
-from src.finder import Finder, gaussian2D
-from src.streak import model
+from pyradon.finder import Finder, gaussian2D
+from pyradon.streak import model
 
 
 class Simulator:
