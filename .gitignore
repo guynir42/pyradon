@@ -5,3 +5,4 @@ __pycache__/
 ARCHIVE
 venv/
 .idea/
+data/
