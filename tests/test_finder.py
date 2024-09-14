@@ -133,9 +133,7 @@ def test_find_single(f, sim):
         assert abs(f.streaks[0].snr - sim.calc_snr()) / sim.calc_snr() < 0.1
         assert abs(f.streaks[0].I - sim.intensity) / sim.intensity < 0.1
         assert abs(f.streaks[0].th - sim.th) / sim.th < 0.1
-        assert (
-            abs(f.streaks[0].x0 - sim.x0 * sim.im_size) / (sim.x0 * sim.im_size) < 0.1
-        )
+        assert abs(f.streaks[0].x0 - sim.x0 * sim.im_size) / (sim.x0 * sim.im_size) < 0.1
         assert abs(f.streaks[0].L - sim.L * sim.im_size) / (sim.L * sim.im_size) < 0.1
 
     except Exception as e:

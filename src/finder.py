@@ -211,10 +211,7 @@ class Finder:
                 return
 
             if not np.isscalar(val) and not isinstance(val, np.ndarray):
-                raise TypeError(
-                    "Input to variance must be a scalar or np.ndarray. "
-                    f"Got {type(val)} instead. "
-                )
+                raise TypeError("Input to variance must be a scalar or np.ndarray. " f"Got {type(val)} instead. ")
 
             if np.isscalar(val) and self.is_var_cache_uniform():
                 for v in self._radon_variance_cache.values():
@@ -255,9 +252,7 @@ class Finder:
             if self.var_uniform:
                 return self.var_scalar * np.ones(size)
             else:  # in this case, there MUST BE a _var_image
-                return self._var_image[
-                    corner[0] : corner[0] + size[0], corner[1] : corner[1] + size[1]
-                ]
+                return self._var_image[corner[0] : corner[0] + size[0], corner[1] : corner[1] + size[1]]
 
         def is_var_cache_uniform(self):
             """
@@ -265,10 +260,7 @@ class Finder:
             value for the "uniform" field.
             If the cache is empty, can assume it is also uniform
             """
-            return (
-                not self._radon_variance_cache
-                or next(iter(self._radon_variance_cache.values())).uniform
-            )
+            return not self._radon_variance_cache or next(iter(self._radon_variance_cache.values())).uniform
 
         def get_radon_variance(self, sec_corner, sec_size, transpose, expand):
             """
@@ -393,9 +385,7 @@ class Finder:
         in case the average variance has been changed.
         """
 
-        def __init__(
-            self, variance, transpose=False, expand=False, corner=(0, 0), im_size=None
-        ):
+        def __init__(self, variance, transpose=False, expand=False, corner=(0, 0), im_size=None):
             """
             Generate a cached Radon variance map to be
             used for calculating S/N of Radon images
@@ -446,10 +436,7 @@ class Finder:
                 self.var_scalar = variance
             elif isinstance(variance, np.ndarray):
                 if np.ndim(variance) != 2:
-                    raise ValueError(
-                        "variance must be a 2D array. "
-                        f"Got a {np.ndim(variance)}D array."
-                    )
+                    raise ValueError("variance must be a 2D array. " f"Got a {np.ndim(variance)}D array.")
                 self.uniform = False
 
                 if im_size is None:
@@ -457,9 +444,7 @@ class Finder:
                 else:
                     upper_corner = (im_size[0] + corner[0], im_size[1] + corner[1])
 
-                self.var_map = variance[
-                    corner[0] : upper_corner[0], corner[1] : upper_corner[1]
-                ]
+                self.var_map = variance[corner[0] : upper_corner[0], corner[1] : upper_corner[1]]
                 self.var_scalar = np.nanmedian(self.var_map)
 
             else:
@@ -565,10 +550,7 @@ class Finder:
         if (
             self.data.image is not None
             and self.data.var_image is not None
-            and (
-                self.data.image.shape != self.data.var_image.shape
-                or self.pars.use_expand != self.data._expanded_var
-            )
+            and (self.data.image.shape != self.data.var_image.shape or self.pars.use_expand != self.data._expanded_var)
         ):
             if self.pars.verbosity > 1:
                 print("Clearing the Radon var-maps")
@@ -743,17 +725,13 @@ class Finder:
 
             # divide by the variance map, geometric factor, and PSF norm for each level
             # m counts the number of foldings, partials start at 2
-            geometric_factors = [
-                self.get_geometric_factor(m) for m in range(2, len(radon_partial) + 2)
-            ]
+            geometric_factors = [self.get_geometric_factor(m) for m in range(2, len(radon_partial) + 2)]
 
             psf_factor = self.get_norm_factor_psf()
 
             # correct the radon images for all these factors
             for i in range(len(radon_partial)):
-                radon_partial[i] /= np.sqrt(
-                    radon_variance_maps[i] * geometric_factors[i] * psf_factor
-                )
+                radon_partial[i] /= np.sqrt(radon_variance_maps[i] * geometric_factors[i] * psf_factor)
 
             # get the final Radon image as 2D map
             radon_image = radon_partial[-1][:, 0, :]
@@ -769,9 +747,7 @@ class Finder:
 
             if best_snr >= threshold and 2**best_idx >= self.pars.min_length:
                 # the x,y,z of the peak in that subframe:
-                peak_coord = np.unravel_index(
-                    snrs_idx[best_idx], radon_partial[best_idx].shape
-                )
+                peak_coord = np.unravel_index(snrs_idx[best_idx], radon_partial[best_idx].shape)
 
                 streak = self.make_streak(
                     snr=best_snr,
@@ -826,10 +802,7 @@ class Finder:
             self.streaks_all.append(streak)
 
             if self.pars.use_write_cutouts:
-                if (
-                    self.pars.max_length_to_write is None
-                    or streak.L < self.pars.max_length_to_write
-                ):
+                if self.pars.max_length_to_write is None or streak.L < self.pars.max_length_to_write:
                     streak.write_to_disk()
 
         # store the final FRT result
@@ -950,16 +923,11 @@ class Finder:
 
         thresholds = np.flip(min_threshold * 2 ** np.arange(dynamic_range + 1))
         if self.pars.verbosity > 1:
-            print(
-                f"mx= {mx:.2f} | dynamic_range= {dynamic_range:.2e} "
-                f"| thresholds: {np.round(thresholds, 2)}"
-            )
+            print(f"mx= {mx:.2f} | dynamic_range= {dynamic_range:.2e} " f"| thresholds: {np.round(thresholds, 2)}")
 
         for t in thresholds:
             mask = np.zeros(im.shape, dtype=bool)
-            np.greater(
-                im / np.sqrt(var_image), t / 2, where=np.isnan(im) == 0, out=mask
-            )
+            np.greater(im / np.sqrt(var_image), t / 2, where=np.isnan(im) == 0, out=mask)
             # clip to threshold (scaled by noise):
             im[mask] = t / 2 * np.sqrt(self.data.var_scalar)
             if self.pars.use_subtract_mean:
@@ -1300,14 +1268,10 @@ def jigsaw(im, cut_size, trim_corner=None, pad_value=None, output_corners=None):
         else:
             raise TypeError("trim_corner must be a scalar or 2-tuple")
 
-    left = np.arange(
-        T[1], S[1], C[1]
-    )  # x position of the corner of each cutout in the input image
+    left = np.arange(T[1], S[1], C[1])  # x position of the corner of each cutout in the input image
     right = left + C[1]
     x = list(zip(left, right))
-    bottom = np.arange(
-        T[0], S[0], C[0]
-    )  # y position of the corner of each cutout in the input image
+    bottom = np.arange(T[0], S[0], C[0])  # y position of the corner of each cutout in the input image
     top = bottom + C[0]
     y = list(zip(bottom, top))
 
@@ -1339,9 +1303,9 @@ def jigsaw(im, cut_size, trim_corner=None, pad_value=None, output_corners=None):
             low_y = max(cy[0], 0)  # in case it is negative
             high_y = min(cy[1], S[0])  # in case bigger than image
 
-            im_out[
-                counter, low_y - cy[0] : high_y - cy[0], low_x - cx[0] : high_x - cx[0]
-            ] = im[low_y:high_y, low_x:high_x]
+            im_out[counter, low_y - cy[0] : high_y - cy[0], low_x - cx[0] : high_x - cx[0]] = im[
+                low_y:high_y, low_x:high_x
+            ]
 
             if output_corners is not None:
                 output_corners.append((cy[0], cx[0]))
