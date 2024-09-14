@@ -87,9 +87,7 @@ class Streak:
         # raw coordinates from the Radon result / subframe
         self.transposed = transpose  # was the image transposed?
         self.foldings = foldings  # in what step in the FRT the streak was found.
-        self.radon_max_idx = (
-            peak  # 3D index of the maximum of the subframe (streak position).
-        )
+        self.radon_max_idx = peak  # 3D index of the maximum of the subframe (streak position).
         self.radon_x0 = None  # position coordinate in the Radon image.
         self.radon_dx = None  # slope coordinate in the Radon image.
         self.radon_x_var = None  # error estimate on "radon_x"
@@ -283,9 +281,7 @@ class Streak:
             self.x2 = self.radon_x0
 
         self.L = abs(self.radon_dy / np.sin(np.radians(self.th)))
-        self.I = self.snr * np.sqrt(
-            self.var_scalar * 2 * np.sqrt(np.pi) * self.psf_sigma / self.L
-        )
+        self.I = self.snr * np.sqrt(self.var_scalar * 2 * np.sqrt(np.pi) * self.psf_sigma / self.L)
         self.snr_fwhm = self.I * 0.81 / np.sqrt(self.var_scalar)
 
         if self.transposed:
@@ -314,9 +310,7 @@ class Streak:
         y2 = int(min(ymax + size_pix, radon_subframe.shape[0] - 1))
         # a copy of the region around the streak, in Radon space
         peak_region = np.copy(radon_subframe[y1:y2, x1:x2])
-        xgrid, ygrid = np.meshgrid(
-            range(peak_region.shape[1]), range(peak_region.shape[0])
-        )
+        xgrid, ygrid = np.meshgrid(range(peak_region.shape[1]), range(peak_region.shape[0]))
 
         idx = np.unravel_index(np.nanargmax(peak_region), peak_region.shape)
         mx = peak_region[idx]
@@ -446,27 +440,17 @@ class Streak:
         """
 
         if image_type == "subsection":
-            mask = (
-                model(im.shape, self.x1, self.x2, self.y1, self.y2, self.psf_sigma) > 0
-            )
+            mask = model(im.shape, self.x1, self.x2, self.y1, self.y2, self.psf_sigma) > 0
         elif image_type == "full":
-            mask = (
-                model(im.shape, self.x1f, self.x2f, self.y1f, self.y2f, self.psf_sigma)
-                > 0
-            )
+            mask = model(im.shape, self.x1f, self.x2f, self.y1f, self.y2f, self.psf_sigma) > 0
         elif image_type == "cutout":
-            mask = (
-                model(im.shape, self.x1c, self.x2c, self.y1c, self.y2, self.psf_sigma)
-                > 0
-            )
+            mask = model(im.shape, self.x1c, self.x2c, self.y1c, self.y2, self.psf_sigma) > 0
         else:
-            raise ValueError(
-                f"image_type {image_type} not recognized... use 'subsection', 'full', or 'cutout'. "
-            )
+            raise ValueError(f"image_type {image_type} not recognized... use 'subsection', 'full', or 'cutout'. ")
 
         im[mask] = replace_value
 
-    def show(self, ax=None):
+    def show(self, ax=None, **kwargs):
         """
         Show the processed image, with the streak
         highlighted with two lines on either side of it.
@@ -482,12 +466,10 @@ class Streak:
         if ax is None:
             ax = plt.gca()
 
-        ax.imshow(self.image_section_raw)
+        ax.imshow(self.image_section_raw, **kwargs)
         self.plot_lines(ax)
 
-    def plot_lines(
-        self, ax=None, offset=10, im_type="section", line_format="--m", linewidth=2.0
-    ):
+    def plot_lines(self, ax=None, offset=10, im_type="section", line_format="--m", linewidth=2.0):
         """
         Show two guiding lines around the position of this streak
         placed on top of an already existing image.
@@ -531,24 +513,14 @@ class Streak:
             y1 = self.y1c
             y2 = self.y2c
         else:
-            raise KeyError(
-                f'Unknown im_type: "{im_type}". Use "section" or "full" or "cutout".'
-            )
+            raise KeyError(f'Unknown im_type: "{im_type}". Use "section" or "full" or "cutout".')
 
         if self.transposed:
-            ax.plot(
-                [x1, x2], [y1 + offset, y2 + offset], line_format, linewidth=linewidth
-            )
-            ax.plot(
-                [x1, x2], [y1 - offset, y2 - offset], line_format, linewidth=linewidth
-            )
+            ax.plot([x1, x2], [y1 + offset, y2 + offset], line_format, linewidth=linewidth)
+            ax.plot([x1, x2], [y1 - offset, y2 - offset], line_format, linewidth=linewidth)
         else:
-            ax.plot(
-                [x1 + offset, x2 + offset], [y1, y2], line_format, linewidth=linewidth
-            )
-            ax.plot(
-                [x1 - offset, x2 - offset], [y1, y2], line_format, linewidth=linewidth
-            )
+            ax.plot([x1 + offset, x2 + offset], [y1, y2], line_format, linewidth=linewidth)
+            ax.plot([x1 - offset, x2 - offset], [y1, y2], line_format, linewidth=linewidth)
 
     def print(self):
         print(
@@ -558,9 +530,7 @@ class Streak:
         )
 
 
-def model(
-    im_size, x1, x2, y1, y2, psf_sigma=2, replace_value=0, threshold=1e-10, oversample=4
-):
+def model(im_size, x1, x2, y1, y2, psf_sigma=2, replace_value=0, threshold=1e-10, oversample=4):
     """
     Generate a model streak using the given coordinates,
     and the PSF sigma width.
@@ -657,9 +627,7 @@ def model(
         d = np.abs(a * x - y + b) / np.sqrt(1 + a**2)  # distance from line
 
     # an image of an infinite streak with gaussian width psf_sigma
-    im0 = (1 / np.sqrt(2.0 * np.pi) / psf_sigma) * np.exp(
-        -0.5 * d**2 / psf_sigma**2
-    )
+    im0 = (1 / np.sqrt(2.0 * np.pi) / psf_sigma) * np.exp(-0.5 * d**2 / psf_sigma**2)
 
     # must clip this streak:
     if x1 == x2 and y1 == y2:  # this is extremely unlikely to happen...
@@ -688,12 +656,8 @@ def model(
         im0[y < (-1 / a * x + y2 + 1 / a * x2)] = 0
 
     # make point-source gaussians at either end of the streak
-    im1 = (1 / np.sqrt(2 * np.pi) / psf_sigma) * np.exp(
-        -0.5 * ((x - x1) ** 2 + (y - y1) ** 2) / psf_sigma**2
-    )
-    im2 = (1 / np.sqrt(2 * np.pi) / psf_sigma) * np.exp(
-        -0.5 * ((x - x2) ** 2 + (y - y2) ** 2) / psf_sigma**2
-    )
+    im1 = (1 / np.sqrt(2 * np.pi) / psf_sigma) * np.exp(-0.5 * ((x - x1) ** 2 + (y - y1) ** 2) / psf_sigma**2)
+    im2 = (1 / np.sqrt(2 * np.pi) / psf_sigma) * np.exp(-0.5 * ((x - x2) ** 2 + (y - y2) ** 2) / psf_sigma**2)
 
     # "attach" the point sources by finding the maximum pixel value
     out_im = np.fmax(im0, np.fmax(im1, im2))
@@ -750,10 +714,7 @@ def downsample(im, factor=2, normalization="sum"):
     if normalization == "mean":
         k = k / np.sum(k)
     elif normalization != "sum":
-        raise KeyError(
-            'Input "normalization" must be "mean" or "sum". '
-            f'Got "{normalization}" instead. '
-        )
+        raise KeyError('Input "normalization" must be "mean" or "sum". ' f'Got "{normalization}" instead. ')
 
     im_conv = scipy.signal.convolve2d(im, k, mode="same")
 

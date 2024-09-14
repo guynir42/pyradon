@@ -99,9 +99,7 @@ def FRT(im, transpose=False, expand=False, padding=True, partial=False, output=N
 
         counter = 0
 
-        for i in range(
-            num_rows // 2
-        ):  # loop over pairs of rows (number of rows in new M)
+        for i in range(num_rows // 2):  # loop over pairs of rows (number of rows in new M)
 
             for j in range(len(dx)):  # loop over different shifts
 
@@ -187,10 +185,7 @@ def get_num_log_foldings(im):
 
 
 def get_empty_partial_array_list(im):
-    return [
-        np.zeros(get_partial_dims(im, m), dtype=im.dtype)
-        for m in range(1, int(get_num_log_foldings(im) + 1))
-    ]
+    return [np.zeros(get_partial_dims(im, m), dtype=im.dtype) for m in range(1, int(get_num_log_foldings(im) + 1))]
 
 
 ####################### MAIN ######################################
